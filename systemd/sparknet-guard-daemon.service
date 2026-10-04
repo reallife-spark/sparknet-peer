@@ -1,0 +1,21 @@
+[Unit]
+Description=Sparknet Critical File Guard (Master-gated immutable file guard)
+# The guard refuses to bind unless the overlay is up, so the anchor unit is a
+# hard requirement rather than a soft preference.
+Requires=sparknet-wireguard-anchor.service
+After=sparknet-wireguard-anchor.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# No WorkingDirectory and no vault path: the generated shim resolves the vault.
+# --apply-enabled is deliberately absent, so the daemon starts in verify-and-audit
+# mode. Arming is an explicit operator decision, because applying means lifting
+# chattr +i on root-owned /etc files. Only one ExecStart is valid for Type=simple.
+ExecStart=/usr/local/libexec/sparknet/sparknet-guard --dry-run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

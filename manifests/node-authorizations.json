@@ -1,0 +1,6 @@
+{
+  "schema_version": "1.0",
+  "master_public_key_b64": "I+8r6I3PR/sAHD5zphk5U2fPzCMGBrGZYMPf6AJMpeU=",
+  "description": "Master-signed node authorization registry. Each entry is an Ed25519 signature over the SHA-256-fingerprinted canonical identity (see services/sparknet-authz.py). A peer cannot add or reinstate entries; only the Master, holding the private key, can.",
+  "authorizations": []
+}

@@ -1,0 +1,2 @@
+# WLAN emergency routing policy (template)
+# Drop wlan0 except to/from Master Anchor 10.100.0.1

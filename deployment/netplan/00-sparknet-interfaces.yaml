@@ -1,0 +1,5 @@
+# Ethernet priority metric 100 (hypothetical template)
+network:
+  version: 2
+  renderer: networkd
+  ethernets: {}

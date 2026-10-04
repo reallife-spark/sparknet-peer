@@ -1,0 +1,4 @@
+services:
+  vault-curator:
+    image: alpine:latest
+    command: ["sleep", "infinity"]

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sparknet WLAN Emergency Guard
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/sparknet/sparknet-wifi-guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

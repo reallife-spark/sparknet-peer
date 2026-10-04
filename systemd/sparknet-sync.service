@@ -1,0 +1,7 @@
+[Unit]
+Description=Sparknet vault sync (user-space)
+Wants=sparknet-sync.timer
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-sync

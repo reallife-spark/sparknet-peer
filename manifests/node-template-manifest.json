@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "node_id": "sparknet-node-template",
+  "roles": [
+    "peer"
+  ],
+  "paths": {},
+  "notes": "Populated at provisioning time."
+}

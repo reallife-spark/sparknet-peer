@@ -1,0 +1,97 @@
+
+
+===== SLIDE 01 =====
+
+Do NOT use any underscores. Outputting `____` constitutes an error under Rule 2, as it hallucinates placeholder symbols where none are semantically intended.
+
+===== SLIDE 02 =====
+
+Treat all other elements of the image as separate objects with spacing.
+title [84, 505, 277, 533]Article 10: Data Governance
+text [83, 549, 296, 637]100% local RAG vector indexing and model fine-tuning with automated PII scrubbing.
+title [383, 504, 532, 531]Article 12: Audit Trails
+text [382, 548, 600, 634]Tamper-proof cryptographic logging into local encrypted storage and SIEM exporters.
+title [683, 505, 846, 535]Article 14 & 15: Security
+text [682, 549, 902, 636]Real-time human override kill-switches and zero-trust hardware memory encryption.
+
+===== SLIDE 03 =====
+
+Treat it as if an object's parts were pieced together. Do not use the word "center" in your output.
+title [83, 568, 221, 601]Base Node (128 GB)
+text [85, 614, 308, 672]Single DGX Spark with 128GB LPDDR5x unified pool via NVLink-C2C (273 GB/s).
+image [400, 476, 417, 511]
+title [386, 553, 550, 584]Enterprise Pod (512 GB)
+text [385, 596, 605, 684]4-node cluster sharing a logical 512GB pool via ConnectX-7 RoCEv2 & GPU Direct RDMA.
+image [696, 496, 718, 531]
+title [686, 569, 871, 599]Datacenter Pod (2.048 TB)
+text [685, 614, 906, 671]16-node non-blocking 400G fabric for core foundation model fine-tuning.
+
+===== SLIDE 04 =====
+
+Do NOT use special symbols (e.g., `con-` \n `nection` / `connection`) in your output.
+title [58, 449, 384, 529]Connecting Headquarters and remote manufacturing plants across Germany.
+text [58, 560, 468, 704]Since speed of light limits direct NVLink coherence across cities, SparkNet implements disaggregated prefill/decoding and WAN-optimized KV-cache streaming over MACsec-encrypted IPsec tunnels.
+title [534, 449, 758, 481]Prefill & Decode Disaggregation
+text [533, 485, 911, 539]Stream compressed KV-cache tensors directly between plant and HQ RAM.
+title [534, 619, 748, 647]Federated RadixAttention Tree
+text [534, 654, 903, 707]Global routing index matching prompt segments to remote node memory.
+
+===== SLIDE 05 =====
+
+Do not use any underscores. Output only the correct punctuation.
+title [121, 492, 277, 558]€12,362
+text [126, 582, 273, 613]Annual Savings / Pod
+text [93, 624, 307, 675]Based on German industrial electricity tariffs (€0.28/kWh).
+title [442, 492, 557, 553]240W
+text [432, 582, 567, 611]Max Draw Per Node
+text [402, 623, 597, 673]Compared to 1,500W+ legacy x86 server workstations.
+title [718, 492, 879, 558]€37,086
+text [734, 582, 866, 612]3-Year TCO Offset
+text [690, 624, 909, 674]Electricity savings fully cover hardware purchase costs.
+
+===== SLIDE 06 =====
+
+Do not list every character in your output.
+title [84, 507, 220, 536]Engineering & R&D
+text [85, 552, 312, 642]CodeBase Guardian (Qwen3.6–27B) & Architecture Simulation (DeepSeek-V4-Flash).
+title [385, 508, 545, 538]Finance & Compliance
+text [385, 553, 603, 640]Ledger Auditing (Qwen3.6-27B) & Predictive Market Risk (DeepSeek-V4-Pro).
+
+===== SLIDE 07 =====
+
+Do not repeat placeholder symbols.
+title [89, 553, 213, 581]Identity & RBAC
+text [88, 602, 301, 697]Native OIDC, SAML 2.0, and Active Directory / LDAP multi-department integration.
+image [400, 468, 420, 501]
+title [390, 553, 593, 580]SAP S/4HANA Connectors
+text [389, 602, 594, 695]Confidential RAG data pipelines feeding structured ERP snapshots into local indices.
+image [699, 468, 721, 501]
+title [689, 553, 837, 581]SIEM & Kubernetes
+text [688, 602, 895, 695]Direct log export to Splunk/Elastic and Helm chart deployment on Kubernetes.
+
+===== SLIDE 08 =====
+
+Do not use underscores.
+
+===== SLIDE 09 =====
+
+Do NOT use any underscores. Do NOT list off the page in the image.
+title [165, 479, 234, 504]Year 1 (Pilot)
+text [127, 521, 272, 571]€489,600
+text [143, 589, 256, 616]12 Enterprise Pods
+text [107, 628, 293, 676]BSI C5 audit & DACH SI partnerships (Bechtle, CANCOM).
+title [456, 479, 542, 506]Year 2 (Scaling)
+text [414, 521, 584, 571]€1,836,000
+text [441, 589, 558, 616]45 Enterprise Pods
+text [399, 628, 600, 676]Break-even (+€720k EBITDA) & DAX40 expansion.
+title [748, 488, 850, 515]Year 3 (Expansion)
+text [711, 531, 886, 582]€4,896,000
+text [738, 598, 861, 626]120 Enterprise Pods
+text [700, 639, 898, 664]Pan-European sovereign cloud rollout.
+
+===== SLIDE 10 =====
+
+Do NOT use any underscores. Treat all images as plain text with respect to the image.
+title [61, 284, 268, 312]INVESTMENT OPPORTUNITY
+title [60, 345, 674, 526]Seeking €1.2M Seed & Grant Funding
+text [58, 548, 607, 660]€800k Seed Equity + €400k Non-Dilutive Innovation Grants to procure 40 DGX Spark nodes, complete BSI C5 certification, and scale DACH enterprise deployments.

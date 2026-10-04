@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.1",
+  "protected_paths": [
+    "/etc/wireguard/wg0.conf",
+    "/etc/netplan/00-sparknet-interfaces.yaml",
+    "/etc/netplan/02-sparknet-wifi-backup.yaml",
+    "/etc/systemd/system/sparknet-wifi-guard.service",
+    "/etc/systemd/system/sparknet-guard-daemon.service",
+    "/etc/sparknet/security-policies.json",
+    "/etc/sparknet/node-template-manifest.json",
+    "/etc/sparknet/user-env-manifest.json",
+    "/etc/sparknet/critical-manifest.json"
+  ],
+  "source_of_truth": {
+    "_comment": "The vault is authoritative. 'source: vault' entries name the tracked file that produces the installed path. 'rendered_by' means the file is rendered from a template with secrets substituted at deploy time and is never committed. 'source: external' means no vault generator exists and the installed file is maintained by hand.",
+    "generated": [
+      {
+        "installed_path": "/etc/wireguard/wg0.conf",
+        "vault_path": "configs/wireguard/wg0-node.conf.template",
+        "source": "vault",
+        "installer": null,
+        "rendered_by": "scripts/sparknet-wireguard-render.sh",
+        "render_target": "$SPARKNET_STATE_DIR/wireguard/wg0.conf",
+        "notes": "Rendered from the vault template with secrets substituted from the environment at mode 0600, then pinned with chattr +i. Never committed. The canonical runtime copy lives in the vault state dir; /etc/wireguard/wg0.conf is the conventional system location and is kept in sync by the operator."
+      },
+      {
+        "installed_path": "/etc/netplan/00-sparknet-interfaces.yaml",
+        "vault_path": "deployment/netplan/00-sparknet-interfaces.yaml",
+        "source": "vault",
+        "installer": "scripts/sparknet-install-config.sh"
+      },
+      {
+        "installed_path": "/etc/netplan/02-sparknet-wifi-backup.yaml",
+        "vault_path": "deployment/netplan/02-sparknet-wifi-backup.yaml",
+        "source": "vault",
+        "installer": "scripts/sparknet-install-config.sh"
+      },
+      {
+        "installed_path": "/etc/systemd/system/sparknet-guard-daemon.service",
+        "vault_path": "systemd/sparknet-guard-daemon.service",
+        "source": "vault",
+        "installer": "scripts/sparknet-install-units.sh"
+      },
+      {
+        "installed_path": "/etc/systemd/system/sparknet-wifi-guard.service",
+        "vault_path": "systemd/sparknet-wifi-guard.service",
+        "source": "vault",
+        "installer": "scripts/sparknet-install-units.sh"
+      },
+      {
+        "installed_path": "/etc/sparknet/critical-manifest.json",
+        "vault_path": "manifests/critical-manifest.json",
+        "source": "vault",
+        "installer": null
+      },
+      {
+        "installed_path": "/etc/sparknet/security-policies.json",
+        "vault_path": "manifests/security-policies.json",
+        "source": "vault",
+        "installer": null
+      },
+      {
+        "installed_path": "/etc/sparknet/node-template-manifest.json",
+        "vault_path": "manifests/node-template-manifest.json",
+        "source": "vault",
+        "installer": null
+      },
+      {
+        "installed_path": "/etc/sparknet/user-env-manifest.json",
+        "vault_path": "manifests/user-env-manifest.json",
+        "source": "vault",
+        "installer": null
+      }
+    ],
+    "unmapped": []
+  },
+  "notes": "Critical paths locked via chattr +i; mutations require a Master-signed approval (Plan-Permission-Execute). The vault holds the generators; installed copies are derived artifacts. scripts/sparknet-install-config.sh is permanently dry-run and cannot write. Authorization for p2p duties is separate: see manifests/node-authorizations.json and docs/node-authorization.md."
+}

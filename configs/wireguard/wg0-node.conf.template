@@ -1,0 +1,52 @@
+# Sparknet node — WireGuard Master Anchor configuration TEMPLATE.
+#
+# Do NOT install this file directly and do NOT commit a filled-in copy.
+# scripts/sparknet-wireguard-render.sh expands the placeholders below into
+#   $SPARKNET_STATE_DIR/wireguard/wg0.conf   (mode 0600, never in git)
+#
+# Placeholders resolved at render time:
+#   NODE_PRIVATE_KEY       base64 Curve25519 private key  (secret)
+#   NODE_ADDRESS          this node's overlay address, e.g. 10.100.0.2/32
+#   NODE_LISTEN_PORT      overlay listen port
+#   MASTER_PUBLIC_KEY     base64 Curve25519 public key of the Master Anchor
+#   MASTER_ENDPOINT       host:port of the Master, e.g. master.example:51820
+#
+# The renderer fails closed if any placeholder survives, so do not write
+# placeholder syntax into prose comments in this file.
+#
+# PrivateKey is never committed. It is substituted at render time from the
+# environment into \$SPARKNET_STATE_DIR/wireguard/wg0.conf at mode 0600, which is
+# git-ignored, then pinned with chattr +i. See AGENTS.md: no secrets in git.
+# The rendered file is then made immutable with `chattr +i` by
+# sparknet-wireguard-anchor.service, which is what "unremovable anchor" means:
+# a node cannot quietly drop its Master link. The Master can still revoke the
+# peer from its own side — see docs/wireguard.md.
+
+[Interface]
+Address    = ${NODE_ADDRESS}
+ListenPort = ${NODE_LISTEN_PORT}
+PrivateKey = ${NODE_PRIVATE_KEY}
+
+# MTU 1400 keeps the tunnel clear of the 1500-byte path MTU when the node is
+# also carrying RoCEv2/TCP on the same NIC.
+MTU = 1400
+
+[Peer]
+# The Master Anchor: every member holds exactly one of these, and it is the
+# only peer a node is permitted to reach by default.
+PublicKey           = ${MASTER_PUBLIC_KEY}
+AllowedIPs          = 10.100.0.1/32
+Endpoint            = ${MASTER_ENDPOINT}
+PersistentKeepalive = 25
+
+# --- Additional peers -------------------------------------------------------
+# P2P rights are granted by the Master via manifests/node-authorizations.json.
+# Each authorized peer adds a [Peer] stanza whose AllowedIPs carries the
+# capability scope the Master signed, e.g.
+#
+#   [Peer]
+#   PublicKey  = <peer base64 pubkey>
+#   AllowedIPs = 10.100.0.7/32     # p2p-sync only
+#
+# Only add stanzas for peers present in the signed registry. A node must never
+# hand-edit this file; the render step owns it.

@@ -1,0 +1,8 @@
+# Peer node runtime dependencies.
+#
+# cryptography is required: Ed25519 verification is not in the standard library,
+# and without it the guard cannot verify a Master signature, so it would refuse
+# every approval. It is the only third-party runtime package the peer uses.
+#
+# tests/test_services.py enforces that this allow-list does not silently grow.
+cryptography>=42

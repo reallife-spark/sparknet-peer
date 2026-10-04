@@ -1,0 +1,20 @@
+[Unit]
+Description=Sparknet WireGuard Master Anchor (render, bring up wg0, pin it)
+After=network-online.target
+Wants=network-online.target
+Before=sparknet-guard-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Secrets come from this EnvironmentFile, created by sparknet-keygen and never
+# tracked. The leading '-' keeps the unit bootable if it is absent.
+EnvironmentFile=-/etc/sparknet/wireguard.env
+# All vault paths live in the generated shim, so this unit stays location-independent.
+ExecStart=/usr/local/libexec/sparknet/sparknet-wireguard-anchor
+TimeoutStartSec=60
+# No ExecStop: tearing the anchor down is the Master's decision (revocation) or
+# the root-gated KillSwitch's job, never a plain `systemctl stop`.
+
+[Install]
+WantedBy=multi-user.target

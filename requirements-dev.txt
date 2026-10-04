@@ -1,0 +1,4 @@
+# Peer node development dependencies. Opt-in via `make devtools`.
+# The suite itself runs on any pytest>=8 and does not require these.
+pytest>=8.0
+ruff>=0.6

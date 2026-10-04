@@ -1,0 +1,54 @@
+{
+  "default_mutating_allowed": false,
+  "unattended_mutations_allowed": false,
+  "require_plan_permission_execute": true,
+  "deny_root_escalation_attempts": true,
+  "replay_protection": {
+    "require_nonce": true,
+    "require_request_id": true,
+    "require_expiry": true,
+    "ttl_seconds": 60
+  },
+  "approval_granularity": "per-file-per-command",
+  "high_impact_paths": [
+    "/etc/wireguard/wg0.conf",
+    "/etc/netplan/00-sparknet-interfaces.yaml",
+    "/etc/netplan/02-sparknet-wifi-backup.yaml"
+  ],
+  "high_impact_dual_approval": ["wireguard", "netplan", "killswitch"],
+  "guard": {
+    "listen_address": "overlay_only",
+    "listen_port": 9090,
+    "default_mode": "verify_and_audit",
+    "apply_requires": ["ed25519_master_signature", "unexpired_and_unreplayed", "target_in_protected_paths", "guard_apply_capability", "euid_0", "apply_enabled_flag"],
+    "off_overlay_clients": "reject",
+    "loopback_clients": "allowed",
+    "content_in_signature": true,
+    "notes": "The guard binds only the node's own overlay address. --apply-enabled is off by default in the shipped unit; arming is an explicit operator decision."
+  },
+  "authorization": {
+    "identity_fingerprint": "sha256(canonical_identity_json)",
+    "signature_algorithm": "ed25519",
+    "registry": "manifests/node-authorizations.json",
+    "master_public_key": "manifests/keys/master-ed25519.pub.b64",
+    "worker_holds_master_private_key": false,
+    "signed_fields": ["fingerprint", "identity", "capabilities", "overlay_ipv4", "issued_at", "expires_at", "revoked"],
+    "known_capabilities": ["telemetry", "p2p-sync", "push-receive", "guard-apply"],
+    "revocation": "Master-side; signs revoked=true. Clearing revoked by hand invalidates the signature.",
+    "notes": "WireGuard has no SHA-256 in its protocol. This layer is the authorization beside the tunnel: the tunnel proves key possession, this proves the Master authorized the identity and its privileges."
+  },
+  "wireguard": {
+    "overlay_cidr": "10.100.0.0/24",
+    "master_anchor_ip": "10.100.0.1",
+    "node_ip_from": "manifests/node-identity.json",
+    "persistent_keepalive": 25,
+    "mtu": 1400,
+    "config_mode": "0600",
+    "pinned_immutable": true,
+    "tracked_files": ["configs/wireguard/wg0-node.conf.template", "configs/wireguard/master-peer.template"],
+    "private_keys_in_vault": false,
+    "teardown": "Master revocation, or the root-gated KillSwitch. Never a plain systemctl stop.",
+    "wlan_egress": "restricted to 10.100.0.1 only, so revocation leaves a revoked node without egress by design",
+    "unverified_on_dev_host": ["live handshake", "PersistentKeepalive behaviour", "chattr +i enforcement", "nftables enforcement"]
+  }
+}

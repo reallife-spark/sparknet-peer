@@ -1,0 +1,32 @@
+[project]
+name = "sparknet-peer-node"
+version = "0.2.0"
+description = "Sparknet peer (worker) node: Master-anchored WireGuard, signed authorization, and critical-file guard."
+requires-python = ">=3.10"
+
+# The peer subvault is standalone: it ships its own dependency declaration
+# rather than reaching into the parent, so a peer can be checked out on its own.
+#
+# cryptography is not optional. Ed25519 verification has no standard-library
+# equivalent, and the guard cannot do its job without it — this is the one
+# third-party package the peer is allowed.
+dependencies = ["cryptography>=42"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# The suite must never touch the real blockchain/ledger.json; tests that need a
+# ledger copy it into tmp_path themselves.
+norecursedirs = [".venv", ".state", ".cache", "references", "node_modules"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# The services are standalone scripts run directly from the vault.
+exclude = [".venv", ".state", ".cache", "references"]
+# `ruff format` is a Python-only gate. Without this it also rewrites fenced
+# code blocks inside the Markdown docs, which is not what this vault wants.
+include = ["*.py", "tests/**/*.py", "services/**/*.py"]

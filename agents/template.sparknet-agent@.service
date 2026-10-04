@@ -1,0 +1,13 @@
+[Unit]
+Description=Sparknet Agent %I
+After=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/bin/true
+WorkingDirectory=%h
+
+[Install]
+WantedBy=default.target

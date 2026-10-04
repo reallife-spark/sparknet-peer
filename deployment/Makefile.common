@@ -1,0 +1,3 @@
+SHELL := /bin/bash
+USER_SYSTEMD_DIR := $(HOME)/.config/systemd/user
+KNOWLEDGE_BASE_DIR := /mnt/knowledge

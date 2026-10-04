@@ -1,0 +1,71 @@
+   Sparknet Network Topology & Parts List
+   Engineering Specification & Bill of Materials for NVIDIA DGX Spark Infrastructure
+
+1. Executive Summary & Architecture Overview
+Sparknet deploys departmental clusters of 4× NVIDIA DGX Spark nodes (512 GB unified memory pool) alongside an
+executive Master Core Apex Node. To support high-throughput tensor sharding and real-time RDMA (RoCEv2)
+traffic, the physical network must be engineered across three operational scenarios with strict distance and hardware
+parameters.
+2. Scenario 1: The Local Data Room / Single Floor
+Topology: Lossless Leaf-Spine Fabric utilizing high-density core switch mesh for sub-microsecond switch hops and
+full line-rate 200G/400G RoCEv2 throughput.
+  Physical Limitations & Signal Physics
+     DAC Limits (≤ 3m to 5m): Copper twinax assemblies suffer high-frequency attenuation via skin effect and dielectric
+     absorption. Beyond 5m, insertion loss causes unacceptable bit-error rates (BER).
+     OM4 Multi-Mode Fiber (up to 100m): Bounded by modal dispersion, where different light modes arrive at skewed times,
+     blurring optical pulses.
+
+  Scenario 1 Hardware Bill of Materials (BOM)
+     Switches: NVIDIA Spectrum-4 SN5600 (32-port 400GbE / 64-port 200GbE) with hardware-accelerated RoCEv2 and
+     PFC/ECN.
+     Adapters: NVIDIA ConnectX-7 Dual-Port 200G/400G Adapters with GPUDirect RDMA.
+     Cabling: 200G/400G DAC Twinax (≤3m); NVIDIA 400GBASE-SR4 QSFP112 transceivers with OM4 MMF trunk patch
+     cords (5m–100m).
+
+
+
+
+Sparknet Network Topology Specification                                                                          Page 1 of 3
+3. Scenario 2: Large Building / Campus Complex
+Topology: Hierarchical Spine-Leaf Campus Fabric bridging MDF and IDF frames across wings or separate campus
+structures.
+  Physical Limits & BOM
+     Attenuation & Dispersion: OS2 Single-Mode Fiber (SMF) limits unamplified FR4 optics to 2 km and LR4 optics to 10 km.
+     Chromatic dispersion causes optical pulse smearing.
+     Core BOM: Juniper PTX10001-36MR routers, NVIDIA Spectrum-4 modular switches, 400GBASE-FR4/LR4 QSFP-DD
+     transceivers, and OS2 armored trunk cables.
+     Clock Sync: Microchip TimeProvider 4100 Grandmaster Clocks for PTP (IEEE 1588) sub-microsecond timing alignment.
+
+4. Scenario 3: Geographically Distributed (Global WAN)
+Topology: Hub-and-Spoke Enterprise WAN Architecture with asynchronous DCI links connecting regional clusters to
+the Master Core Apex Node.
+  Physical Limits & BOM
+     Light Propagation Floor: Light travels at ~200,000 km/s in glass, creating an immutable latency floor of ~10ms RTT per
+     1,000 km. Real-time RoCE memory pooling is impossible; asynchronous state handoffs are required.
+     Master & DCI BOM: NVIDIA DGX H200/B200 Apex nodes, Ciena Waveserver 5 coherent transponders, ROADMs, and
+     EDFA optical line amplifiers.
+
+
+
+
+Sparknet Network Topology Specification                                                                             Page 2 of 3
+5. Master Architectural Summary Matrix
+ Parameter           Scenario 1 (Local)             Scenario 2 (Campus)               Scenario 3 (Global WAN)
+ Max Distance        Up to 100 meters               Up to 10 kilometers               Transcontinental / Global
+ Media Type          DAC Twinax & OM4 MMF           OS2 Single-Mode Fiber             Dark Fiber + DWDM OLS
+ Fabric Style        Lossless Leaf-Spine            Spine-Leaf Campus PTP             Hub-and-Spoke DCI WAN
+ Memory Model        Synchronous 512GB Pool         Synchronous Campus Mesh           Asynchronous KV-Cache Handoff
+
+6. Critical Issues & Pitfalls to Avoid
+  Operational Safeguards
+     PFC Deadlocks (Scenario 1): Misconfigured Priority Flow Control freezes memory buses. Fix: Always enforce ECN
+     alongside PFC.
+     Fiber Bend Radius (Scenario 2): Pulling OS2 fiber tighter than 20x outer diameter causes macro-bending signal loss.
+     WAN Synchronous Locking (Scenario 3): Attempting raw RoCEv2 or cluster memory paging across city WANs causes
+     catastrophic timeout stalls. Fix: Use asynchronous JSON payloads and compressed KV-cache prefetching.
+
+
+
+
+Sparknet Network Topology Specification                                                                           Page 3 of 3
+

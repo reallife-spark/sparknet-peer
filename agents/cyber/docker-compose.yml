@@ -1,0 +1,4 @@
+services:
+  cyber:
+    image: alpine:latest
+    command: ["sleep", "infinity"]

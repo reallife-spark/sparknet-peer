@@ -1,0 +1,5 @@
+{
+  "schema_version": "1.0",
+  "description": "Hash-chained permissioned approval ledger (append-only)",
+  "required": ["block_id", "prev_hash", "timestamp", "signature", "data"]
+}

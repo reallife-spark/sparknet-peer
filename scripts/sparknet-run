@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Vault-agnostic wrapper to run commands with explicit env
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/sparknet-env.sh"
+
+# Run with absolute paths, clean env where appropriate
+exec "$@"

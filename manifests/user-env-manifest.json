@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-10-04T13:50:15Z",
+  "user": {
+    "uid": 1000,
+    "euid": 1000,
+    "gid": 1000,
+    "egid": 1000,
+    "username": "raxxar",
+    "home": "/home/raxxar",
+    "shell": "/bin/bash",
+    "groups": [
+      "autologin",
+      "docker",
+      "kvm",
+      "libvirt",
+      "render",
+      "sudo",
+      "users"
+    ]
+  },
+  "environment": {
+    "xdg_config_home": "/mnt/knowledge/.config",
+    "xdg_data_home": "/mnt/knowledge/.local/share",
+    "xdg_state_home": "/mnt/knowledge/sparknet/peer-node/.state",
+    "path": "/home/raxxar/.local/bin:/home/raxxar/.bun/bin:/home/raxxar/.opencode/bin:/mnt/knowledge/local/bin:/mnt/knowledge/obsidian:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"
+  },
+  "system": {
+    "hostname": "raxxar",
+    "os": "Linux",
+    "platform": "Linux-7.0.13-custom-accel-aarch64-with-glibc2.42",
+    "release": "7.0.13-custom-accel",
+    "machine": "aarch64"
+  },
+  "privilege_boundaries": {
+    "is_root": false,
+    "note": "All agentic operations default to user context; root-only actions require explicit gated approvals"
+  }
+}

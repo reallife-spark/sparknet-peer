@@ -1,0 +1,28 @@
+# Peer-local runtime state and caches. See scripts/sparknet-env.sh — these are
+# created inside this subvault so a node's secrets and scratch data never leak
+# onto the host filesystem outside the vault tree.
+.state/
+.cache/
+
+# Staged LLM-written pages (WIKI_STAGED_WRITES=true)
+_staging/
+
+# Vault editor workspace state (machine-local)
+.vault-config/workspace.json
+.vault-config/workspace-mobile.json
+.vault-config/cache
+
+# Tooling noise
+__pycache__/
+*.pyc
+.venv/
+.trash/
+.DS_Store
+
+# Distribution archives
+dist/
+
+# Tool caches that self-ignore via an inner .gitignore, but only in recent
+# versions. Declared here so a cache can never be committed by an older tool.
+.ruff_cache/
+.pytest_cache/
