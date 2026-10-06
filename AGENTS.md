@@ -22,7 +22,12 @@ refuses to apply. That asymmetry is deliberate — a node that has lost its
 Master has lost its authority, and the correct response is to keep it useful
 but inert.
 
-The Master role lives in `master-node/` and is specified, not yet built.
+The Master role lives in `master-node/` and its signing side is built but
+**unused**: the isolated signer exists, and Step 11 built the election that can
+elect a Master, but no node has been elected yet — nothing on disk is Master
+until three members run the ceremony and a signed cluster trust root lands.
+Until then, `master-node/manifests/master-identity.json` correctly says
+`role: "peer"`.
 
 ## Boundaries vs the Master
 

@@ -223,5 +223,13 @@ wg-render-peer: ## render peer wg (needs REGISTRY)
 # --- election ---
 .PHONY: election-request
 
-election-request:
-	@$(ROLE_ROOT)/scripts/sparknet-election-request.sh
+# Runs the shared member ceremony (bid -> vote -> co-sign -> install).
+# Other members endorse a requester with: CANDIDATE=<node-id> make election-request
+election-request: ## run this node's part of the election (URL= CANDIDATE= NODE_ID= IDENTITY= KEY_DIR= WAIT=)
+	@$(ROLE_ROOT)/scripts/sparknet-election-request.sh \
+	  $(if $(URL),--url "$(URL)") \
+	  $(if $(NODE_ID),--node-id "$(NODE_ID)") \
+	  $(if $(CANDIDATE),--candidate "$(CANDIDATE)") \
+	  $(if $(IDENTITY),--identity "$(IDENTITY)") \
+	  $(if $(KEY_DIR),--key-dir "$(KEY_DIR)") \
+	  $(if $(WAIT),--wait-seconds "$(WAIT)")
