@@ -26,3 +26,14 @@ dist/
 # versions. Declared here so a cache can never be committed by an older tool.
 .ruff_cache/
 .pytest_cache/
+
+# Key material — the first line of defence, with `make keys-check` as the
+# second. Private keys live under .state/ (mode 0700/0600) and are never
+# committed, whatever directory one turns up in. Listed as bare patterns so
+# scripts/sparknet-keys-check.sh can prove the backstop is still present.
+*.ed25519
+*.pem
+*.key
+privkey*
+id_ed25519*
+*.seed

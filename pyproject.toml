@@ -30,3 +30,11 @@ exclude = [".venv", ".state", ".cache", "references"]
 # `ruff format` is a Python-only gate. Without this it also rewrites fenced
 # code blocks inside the Markdown docs, which is not what this vault wants.
 include = ["*.py", "tests/**/*.py", "services/**/*.py"]
+
+[tool.ruff.lint]
+# Without this, ruff applies its own default selection to this subtree — 413 rules
+# against the fabric root's 108 — because `[tool.ruff]` alone does not narrow
+# anything. The two roles then get graded on different standards, and since the
+# peer's own lint target looks for ruff only in peer-node/.venv it reported a skip
+# rather than the result. Same rule set as the fabric root, deliberately.
+select = ["E", "F", "I", "UP"]

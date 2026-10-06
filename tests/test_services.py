@@ -1,8 +1,11 @@
 """Service-level behaviour and the zero-dependency guarantee.
 
-Also covers the sharpest edge in this repo: `--test-approval` without
-`--dry-run` appends to the ledger. Every test here works on a copy so the real
-blockchain/ledger.json is never touched.
+Approvals used to be appendable through `dispatch-bridge --test-approval`, which
+wrote blocks in a shape of its own (`index`/`payload`/`block_hash`, a stub
+signature) that the real chain never understood. That flag is gone: the bridge
+now has no way to write the ledger at all, and the append path lives in
+`shared/sparknet-provenance.py` where there is exactly one block builder. Every
+test here works on a copy so the real blockchain/ledger.json is never touched.
 """
 
 from __future__ import annotations
@@ -163,8 +166,18 @@ def test_health_check() -> None:
     assert "dispatch" in (proc.stdout + proc.stderr).lower()
 
 
-def test_test_approval_does_not_touch_real_ledger() -> None:
-    """The important safety property: run it for real, against a copy."""
+def test_test_approval_is_gone_and_the_bridge_cannot_write_the_ledger() -> None:
+    """The flag is deleted rather than corrected: no second block builder.
+
+    A bridge that can append a block of its own invention is how the ledger
+    shapes diverged. The strongest form of the guarantee is not "the bridge
+    appends safely" but "the bridge cannot append at all", so this asserts the
+    refusal *and* that every surviving mode leaves a copy's ledger untouched.
+    """
+    source = (VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py").read_text()
+    assert "add_argument(\"--test-approval\")" not in source, "the ledger-writing flag came back"
+    assert "json.dump" not in source, "the bridge serialises nothing"
+
     before = LEDGER.read_bytes()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -174,20 +187,32 @@ def test_test_approval_does_not_touch_real_ledger() -> None:
             dest,
             ignore=shutil.ignore_patterns(".git", ".venv", ".state", ".cache", "__pycache__", "references"),
         )
-        proc = subprocess.run(
-            [sys.executable, str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
+        copied_ledger = dest / "blockchain" / "ledger.json"
+        for mode in ([], ["--dry-run"], ["--health"]):
+            proc = subprocess.run(
+                [sys.executable, str(dest / "services" / "sparknet-dispatch-bridge.py"), *mode],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "SPARKNET_VAULT_ROOT": str(dest), "VAULT_PATH": str(dest)},
+            )
+            assert proc.returncode == 0, proc.stdout + proc.stderr
+            assert copied_ledger.read_bytes() == before, f"mode {mode} wrote the ledger"
+
+        refused = subprocess.run(
+            [
+                sys.executable,
+                str(dest / "services" / "sparknet-dispatch-bridge.py"),
+                "--test-approval",
+            ],
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ, "SPARKNET_VAULT_ROOT": str(dest), "VAULT_PATH": str(dest)},
         )
-        assert proc.returncode == 0, proc.stdout + proc.stderr
-        # The copy changed...
-        assert (dest / "blockchain" / "ledger.json").read_bytes() != before, (
-            "expected the copy's ledger to be appended to"
-        )
-        # ...and the real one did not.
-        assert LEDGER.read_bytes() == before, "REAL LEDGER MUTATED — this is a serious bug"
+        assert refused.returncode != 0, "the bridge still accepts --test-approval"
+        assert "unrecognized" in (refused.stdout + refused.stderr).lower()
+
+    assert LEDGER.read_bytes() == before, "REAL LEDGER MUTATED — this is a serious bug"
 
 
 def test_real_ledger_is_valid_json() -> None:

@@ -1,6 +1,6 @@
 ---
 title: sparknet peer-node — agent charter
-updated: 2026-10-04
+updated: 2026-10-06
 ---
 
 # sparknet peer-node — agent charter
@@ -42,19 +42,38 @@ are the ones that do not depend on the peer's cooperation: `chattr +i` on
 protected files, the nftables egress restriction, and the requirement for a
 Master signature that simply does not exist locally.
 
-## Layout (wiki category layout)
+## Layout (numbered PARA layout; legacy names are shims)
+
+This subvault stores its vault content in numbered directories. Every legacy
+category name (`concepts/`, `references/`, `_raw/`, …) is a **symlink** to its
+numbered home, so the wiki skills' `VAULT_CATEGORIES` and every old instruction
+that names a category directory keep working — both spellings are one file.
 
 | Path | Holds |
 |---|---|
-| `concepts/` | distilled ideas and definitions |
-| `entities/` | people, organisations, systems, products |
-| `skills/` | reusable procedures (how-to pages) |
-| `references/` | external material: docs, specs, transcripts, datasets |
-| `synthesis/` | conclusions ACROSS two or more pages |
-| `journal/` | dated entries and session notes |
-| `projects/` | per-project knowledge |
-| `sessions/` | per-session agent memory (`YYYY-MM-DD.md`) |
-| `_raw/` | unprocessed captures — nothing is deleted from here |
+| `00_System/` | `user.md`, `alpha-agent.md`, `schema.yaml`, `secrets-index.json`, `index.md`, `log.md` |
+| `01_Inbox/` | unprocessed intake awaiting dispatch and signature |
+| `02_Daily/` | journal entries and session memory (`YYYY-MM-DD.md`) |
+| `03_Sources/` | external material and raw captures: docs, specs, transcripts, datasets |
+| `04_Evergreen/` | stable evergreen material |
+| `05_Knowledge/` | `concepts/`, `entities/`, `skills/`, `synthesis/` |
+| `06_Projects/` | per-project knowledge |
+| `07_Archives/` | superseded material and vault snapshots |
+
+Shims (symlinks created by `../scripts/sparknet-env-init.sh`, never hand-made):
+
+| Legacy name | Points at |
+|---|---|
+| `concepts/`, `entities/`, `skills/`, `synthesis/` | `05_Knowledge/<name>` |
+| `journal/`, `sessions/` | `02_Daily/` |
+| `references/`, `_raw/` | `03_Sources/` |
+| `projects/` | `06_Projects/` |
+| `_archives/` | `07_Archives/` |
+| `index.md`, `log.md` | `00_System/<name>` |
+
+`_staging/` is real, not a shim — it is the skill-internal staging area
+(`WIKI_STAGED_WRITES`), not vault content. Write new content to the numbered
+path; a shim exists so old links and old instructions still resolve.
 
 Role-specific trees:
 
@@ -87,8 +106,8 @@ the Master's signatures.
 
 - `MEMORY.md` — **standing state only**, tiny: plan cursor, durable facts,
   blockers. Replace, never append indefinitely.
-- `sessions/YYYY-MM-DD.md` — that session's full record. One file per day;
-  sessions spanning midnight use the start date.
+- `02_Daily/YYYY-MM-DD.md` — that session's full record (`sessions/` is a shim
+  to it). One file per day; sessions spanning midnight use the start date.
 - Read `MEMORY.md` and today's session file at session start; write detail only
   to today's session file. Never back-write history into `MEMORY.md`.
 
@@ -99,14 +118,16 @@ the Master's signatures.
 - Frontmatter `current:` marks the step being worked.
 - Mark a step `[x]` **only** after its DoD is verified, then advance the cursor
   and write `PLAN.md` back **immediately**.
-- Append one line per transition to `log.md` (append-only audit trail).
+- Append one line per transition to `00_System/log.md` (append-only audit
+  trail; `log.md` at the root is a shim to it).
 - Terminal state is `current: done`. New roadmap work gets a **new** step; do
   not silently reuse a finished plan.
 - A step whose DoD cannot be auto-verified is marked `DoD: confirm: user`.
 
 ## Canonical placement
 
-- Distilled page → its category dir. Raw capture → `_raw/` until distilled.
+- Distilled page → `05_Knowledge/<category>/`. Raw capture → `03_Sources/`
+  (`_raw/` is a shim) until distilled. Inbox intake → `01_Inbox/`.
 - Logs and telemetry → `/mnt/log/`, not the vault and not `~/`.
 - Runtime caches → `$OPENCODE_DATA_DIR`; secrets → `.state/` (gitignored,
   mode 0700).

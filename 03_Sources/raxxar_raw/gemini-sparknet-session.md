@@ -4,16 +4,47 @@ type: source-transcript
 source: https://share.gemini.google/2jurMLKyr7dQ
 source_id: 77367da8ff7c
 model: Flash-Lite
-captured: "2026-09-29"
+captured: 2026-09-29
 turns: 37
 status: raw-capture
 tags: [ai, llm, cluster, networking, hardware]
-summary: >-
-    Complete verbatim transcript of a 37-turn Gemini session designing
-    'Sparknet', a multi-department local-AI architecture for NVIDIA DGX
-    Spark clusters. Preserved unedited as an immutable source capture.
+summary: "Complete verbatim transcript of a 37-turn Gemini session designing 'Sparknet', a multi-department local-AI architecture for NVIDIA DGX Spark clusters. Preserved unedited as an immutable source capture."
 lifecycle: draft
 tier: reference
+tracking:
+  schema: sparknet-tracking/1
+  owner_id: U-27689
+  owner_node: sparknet-node-0001
+  owner_ref: 00_System/user.md
+  validity:
+    state: signed
+  conversation: []
+  shares: []
+  agent: opencode
+  model: big-pickle
+  approvals: []
+  signature:
+    alg: ed25519
+    sig: IdEcHxmlfQuCv6Pw4ShoIJC/LqV5CKUXu+Vsyg/u7bb+vqM/LreQjse5nZ/41tpC4EvzpGCWNWDfGqCS1F0GCQ==
+    key_id: U-27689
+    key_fingerprint: sha256:b4321f7ae5e41618306a4cc1e5f101771a8dc6032d6b7ac426702bb960af078e
+    signed_body_sha256: c76456ea8ba7819400dcc34ac8cbc6827f057f3c0ae489aa3e0d49b4f89be668
+    signed_meta_sha256: 8502e6851d4481d13c163ee657bb7d434d490dcfd9211e314d5de59034eeb6f1
+    signed_tracking_sha256: baeb5e290d3300ec5c8c3d955eb7fbc4b6d0a1228b627f1e4e699502579ad0b5
+    signed_meta:
+      title: Gemini Sparknet Session (verbatim transcript)
+      type: source-transcript
+      source: https://share.gemini.google/2jurMLKyr7dQ
+      source_id: 77367da8ff7c
+      model: Flash-Lite
+      captured: 2026-09-29
+      turns: 37
+      status: raw-capture
+      tags: [ai, llm, cluster, networking, hardware]
+      summary: "Complete verbatim transcript of a 37-turn Gemini session designing 'Sparknet', a multi-department local-AI architecture for NVIDIA DGX Spark clusters. Preserved unedited as an immutable source capture."
+      lifecycle: draft
+      tier: reference
+    signed_at: 2026-10-06T10:52:47.927459Z
 ---
 
 # Gemini Sparknet Session — verbatim transcript

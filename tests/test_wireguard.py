@@ -364,6 +364,7 @@ SCAN_EXCLUDE = {
     "__pycache__",
     "node_modules",
     "references",
+    "03_Sources",
     "dist",
     ".opencode",
 }
@@ -393,6 +394,23 @@ def _vault_source_files() -> list[Path]:
     return sorted(files)
 
 
+def _scrub_envelope_signatures(text: str) -> str:
+    """Drop the provenance envelope's `sig:` value before key-shape scanning.
+
+    An Ed25519 signature is exactly the shape this detector is hunting for —
+    base64 of 64 bytes — and `tracking.signature.sig` is the one place that
+    blob is *supposed* to live. Scanning it would flag every signed note as a
+    WireGuard private key. The field is stripped, not the file: a real key in
+    the body or anywhere else still trips the detector.
+    """
+    return re.sub(
+        r'^(\s*)sig: ["\']?[A-Za-z0-9+/]{80,}={0,2}["\']?\s*$',
+        r"\1sig: <envelope-signature>",
+        text,
+        flags=re.M,
+    )
+
+
 def _tracked_files() -> list[Path]:
     """Only git-tracked files, for assertions that are specifically about commits."""
     proc = subprocess.run(
@@ -414,12 +432,20 @@ def test_key_scan_covers_untracked_files_too() -> None:
     and `.opencode/` are deliberately out of scope, so the check is on in-scope
     tracked files plus the files we actually author.
     """
-    scanned = set(_vault_source_files())
+    # Both sides are compared resolved: a legacy name is now a shim, so
+    # `concepts/x.md` and `05_Knowledge/concepts/x.md` are one file, and only
+    # the numbered path is on disk to scan.
+    scanned = {p.resolve() for p in _vault_source_files()}
 
+    # A tracked path that is not on disk carries no bytes to scan — that
+    # happens only while a rename is staged but uncommitted, and the file is
+    # scanned under its new path either way.
     in_scope_tracked = {
-        p for p in _tracked_files() if not any(part in SCAN_EXCLUDE for part in p.relative_to(VAULT_ROOT).parts)
+        p for p in _tracked_files()
+        if p.is_file()
+        and not any(part in SCAN_EXCLUDE for part in p.resolve().relative_to(VAULT_ROOT).parts)
     }
-    hidden = sorted(str(p) for p in in_scope_tracked - scanned)
+    hidden = sorted(str(p) for p in in_scope_tracked if p.resolve() not in scanned)
     assert not hidden, f"in-scope tracked files invisible to the scan: {hidden[:5]}"
 
     must_cover = [
@@ -445,7 +471,7 @@ def test_no_private_key_material_in_the_vault() -> None:
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
-        for match in re.findall(r"[A-Za-z0-9+/]{86}==", text):
+        for match in re.findall(r"[A-Za-z0-9+/]{86}==", _scrub_envelope_signatures(text)):
             if len(base64.b64decode(match)) == 64:
                 offenders.append(str(path.relative_to(VAULT_ROOT)))
     assert not offenders, f"possible WireGuard private key in: {sorted(set(offenders))}"
@@ -461,7 +487,7 @@ def test_no_tracked_private_key_material_in_vault() -> None:
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
-        for match in re.findall(r"[A-Za-z0-9+/]{86}==", text):
+        for match in re.findall(r"[A-Za-z0-9+/]{86}==", _scrub_envelope_signatures(text)):
             if len(base64.b64decode(match)) == 64:
                 offenders.append(str(path.relative_to(VAULT_ROOT)))
     assert not offenders, f"possible WireGuard private key in: {sorted(set(offenders))}"

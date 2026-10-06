@@ -10,11 +10,13 @@ hashing the tree before and after, so "exit 0" alone can never pass.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -209,7 +211,7 @@ def test_guard_manifest_validation_fails_when_provenance_is_missing(tmp_path: Pa
     assert "without provenance" in (proc.stdout + proc.stderr)
 
 
-# --- Phase 4 item: dispatch-bridge --health / --test-approval ---------------
+# --- dispatch bridge: health, no ledger write path, canonical approvals ---
 
 
 def test_dispatch_health_ok() -> None:
@@ -226,7 +228,12 @@ def test_dispatch_health_ok() -> None:
         assert state in proc.stdout, f"PPE state {state} missing from health output"
 
 
-def test_dispatch_test_approval_appends_only_to_a_copy(tmp_path: Path) -> None:
+def test_dispatch_never_writes_the_ledger(tmp_path: Path) -> None:
+    """Every surviving mode leaves the ledger byte-identical, and the old flag is refused.
+
+    `--test-approval` used to append blocks in a shape the chain never
+    understood; it is deleted, so the guarantee is now "cannot append at all".
+    """
     ledger = VAULT_ROOT / "blockchain" / "ledger.json"
     before = ledger.read_bytes()
     dest = tmp_path / "vault"
@@ -235,29 +242,9 @@ def test_dispatch_test_approval_appends_only_to_a_copy(tmp_path: Path) -> None:
         dest,
         ignore=shutil.ignore_patterns(".git", ".venv", ".state", ".cache", "__pycache__", "references", ".opencode"),
     )
-    proc = subprocess.run(
-        ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-        env={**os.environ, "SPARKNET_VAULT_ROOT": str(dest), "VAULT_PATH": str(dest)},
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert (dest / "blockchain" / "ledger.json").read_bytes() != before
-    assert ledger.read_bytes() == before, "the real ledger must never be written by a test"
-
-
-def test_dispatch_test_approval_keeps_the_hash_chain_valid(tmp_path: Path) -> None:
-    dest = tmp_path / "vault-chain"
-    shutil.copytree(
-        VAULT_ROOT,
-        dest,
-        ignore=shutil.ignore_patterns(".git", ".venv", ".state", ".cache", "__pycache__", "references", ".opencode"),
-    )
-    for _ in range(3):
+    for mode in ([], ["--dry-run"], ["--health"]):
         proc = subprocess.run(
-            ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
+            ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), *mode],
             capture_output=True,
             text=True,
             check=False,
@@ -265,14 +252,114 @@ def test_dispatch_test_approval_keeps_the_hash_chain_valid(tmp_path: Path) -> No
             env={**os.environ, "SPARKNET_VAULT_ROOT": str(dest), "VAULT_PATH": str(dest)},
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
-    blocks = json.loads((dest / "blockchain" / "ledger.json").read_text())["blocks"]
-    assert len(blocks) >= 3
-    # Each block names its predecessor by hash, and indexes stay consecutive.
-    for i in range(1, len(blocks)):
-        assert blocks[i]["prev_hash"] == blocks[i - 1]["block_hash"], f"chain broken at block {i}"
-        assert blocks[i]["index"] == blocks[i - 1]["index"] + 1
-    # Re-sealing the chain must reproduce the same digests (no drift on reload).
-    assert blocks[0]["prev_hash"] == ""
+        assert (dest / "blockchain" / "ledger.json").read_bytes() == before, f"mode {mode} wrote"
+
+    refused = subprocess.run(
+        ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert refused.returncode != 0, "--test-approval came back"
+    assert ledger.read_bytes() == before, "the real ledger must never be written by a test"
+
+
+def _write_node_key(authz_path: Path, dest: Path) -> None:
+    """Generate the node's countersignature key at 0600 in a throwaway state dir.
+
+    The approval blocks are dual-signed, so an append test needs both halves of
+    the key custody — the user half comes from `user-init`, this is the node's.
+    """
+    spec = importlib.util.spec_from_file_location("sparknet_authz_for_approvals", authz_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    private_b64, _ = module.generate_keypair()
+    dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    dest.write_text(private_b64 + "\n")
+    dest.chmod(0o600)
+
+
+def test_approvals_are_appended_through_the_shared_tool(tmp_path: Path) -> None:
+    """One append path, the canonical block shape, and a chain that re-links.
+
+    The bridge cannot do this any more, so if `--test-approval` ever returns the
+    failure lands here: the canonical shape, the dual signatures and the
+    `prev_hash` link are all asserted from an append that only shared/ can make.
+    """
+    fabric = VAULT_ROOT.parent
+    tool = fabric / "shared" / "sparknet-provenance.py"
+    authz_tool = fabric / "shared" / "sparknet-authz.py"
+    assert tool.is_file() and authz_tool.is_file(), "the shared implementation must exist"
+
+    root = tmp_path / "vault"
+    (root / "00_System").mkdir(parents=True)
+    (root / "01_Inbox").mkdir()
+    (root / "blockchain").mkdir()
+    (root / "00_System" / "user.md").write_text(
+        "---\n"
+        "type: user-record\n"
+        "schema: sparknet-user/1\n"
+        "status: unfilled\n"
+        'owner_id: ""\n'
+        'owner_node: ""\n'
+        "role: owner\n"
+        "immutable: true\n"
+        "key:\n"
+        "  alg: ed25519\n"
+        '  public_key_b64: ""\n'
+        '  fingerprint: ""\n'
+        '  key_ref: "$SPARKNET_STATE_DIR/keys/user.ed25519"\n'
+        '  created: ""\n'
+        "---\n\n# user record\n"
+    )
+    env = {**os.environ, "SPARKNET_STATE_DIR": str(tmp_path / "state")}
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        proc = subprocess.run(
+            ["python3", str(tool), "--vault", str(root), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        return proc
+
+    run("user-init", "--owner-id", "U-10001")
+    _write_node_key(authz_tool, tmp_path / "state" / "keys" / "ed25519-node.key.b64")
+    run("append-approval", "--question", "may this node ingest the capture?", "--decision", "approved",
+        "--agent", "tester", "--model", "none")
+    run("append-approval", "--question", "a second one?", "--decision", "clarified",
+        "--agent", "tester", "--model", "none")
+
+    blocks = json.loads((root / "blockchain" / "ledger.json").read_text())["blocks"]
+    assert len(blocks) == 2
+    for index, block in enumerate(blocks):
+        assert set(block) == {"block_id", "prev_hash", "timestamp", "signature", "data", "hash"}, (
+            f"block {index} is not the canonical shape: {sorted(block)}"
+        )
+        assert block["block_id"] == f"{index:08d}"
+        assert block["signature"] == block["data"]["signatures"]["node"]
+        assert block["prev_hash"] == (blocks[index - 1]["hash"] if index else "")
+        # The shape the deleted flag invented must not reappear anywhere.
+        assert not {"index", "payload", "block_hash"} & set(block)
+
+    verified = subprocess.run(
+        ["python3", str(tool), "--vault", str(root), "verify"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env=env,
+    )
+    assert verified.returncode == 0, verified.stdout + verified.stderr
 
 
 # --- Phase 4 item: identity capture + provision -----------------------------

@@ -8,6 +8,7 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 VAULT_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+ROLE_ROOT := $(VAULT_ROOT)
 FABRIC_ROOT := $(patsubst %/,%,$(dir $(VAULT_ROOT)))
 
 # Prefer the optional .venv when it exists, otherwise the system interpreter.
@@ -16,7 +17,8 @@ PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),python3)
 
 .PHONY: help env-init validate test lint devtools provision dist bundle install-units \
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
-        peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture clean
+        peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture clean \
+        provenance-verify user-init provenance-append ingest precommit shims-check keys-check
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -37,9 +39,11 @@ lint: ## Ruff if available; otherwise explains how to get it
 	elif [ -x "$(VAULT_ROOT)/.venv/bin/ruff" ]; then \
 		"$(VAULT_ROOT)/.venv/bin/ruff" check . && "$(VAULT_ROOT)/.venv/bin/ruff" format --check . ; \
 	else \
-		echo "ruff not installed — skipping lint."; \
-		echo "Run 'make devtools' to install it into .venv."; \
-		echo "(ruff is optional; the suite runs without it.)"; \
+		echo "ruff not installed — cannot lint."; \
+		echo "Run 'make devtools' at the fabric root, or use 'make lint' there,"; \
+		echo "which lints this role with the fabric interpreter."; \
+		echo "Not skipping silently: a lint gate that cannot run is not a gate."; \
+		exit 1; \
 	fi
 
 devtools: ## Create .venv with cryptography + pytest + ruff (opt-in)
@@ -133,6 +137,47 @@ print('role:     ', d['role']); \
 print('overlay:  ', d['overlay_ipv4']); \
 print('requests: ', ', '.join(d['requested_capabilities']))"
 
+# --- provenance (the numbered layout's trust layer) ---------------------------
+#
+# Everything here delegates to ../shared/sparknet-provenance.py: one
+# implementation, loaded from the fabric, never copied into this subvault.
+
+PROV := $(FABRIC_ROOT)/shared/sparknet-provenance.py
+PROV_PY := $(if $(wildcard $(FABRIC_ROOT)/.venv/bin/python),$(FABRIC_ROOT)/.venv/bin/python,$(PY))
+PROV_VAULT := --vault "$(VAULT_ROOT)"
+
+provenance-verify: ## Verify every note, the ledger and the approvals (STRICT=1 for --strict)
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) verify $(if $(STRICT),--strict,)
+
+user-init: ## Generate the user key + fill 00_System/user.md once (FORCE=1 to redo)
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) user-init $(if $(FORCE),--force,) \
+		$(if $(OWNER_ID),--owner-id "$(OWNER_ID)",)
+
+provenance-append: ## Record a dual-signed approval (QUESTION= DECISION= AGENT= MODEL= [NOTE=...])
+	@test -n "$(QUESTION)" || { echo "QUESTION= required" >&2; exit 1; }
+	@test -n "$(DECISION)" || { echo "DECISION= required" >&2; exit 1; }
+	@test -n "$(AGENT)"     || { echo "AGENT= required"     >&2; exit 1; }
+	@test -n "$(MODEL)"     || { echo "MODEL= required"     >&2; exit 1; }
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) append-approval --question "$(QUESTION)" \
+		--decision "$(DECISION)" --agent "$(AGENT)" --model "$(MODEL)" \
+		$(if $(NOTE),--note $(NOTE),)
+
+ingest: ## Land STDIN or SRC= as an unsigned note in 01_Inbox/ (SOURCE=master-node|peer-node|email)
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) ingest $(if $(SRC),"$(SRC)","-") \
+		--source "$(if $(SOURCE),$(SOURCE),peer-node)" \
+		$(if $(SENDER),--sender "$(SENDER)",)
+
+shims-check: ## Prove every legacy name is a symlink to its numbered home
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) shims
+
+keys-check: ## No key material tracked; state-dir keys are 0600
+	@$(FABRIC_ROOT)/scripts/sparknet-keys-check.sh "$(VAULT_ROOT)"
+
+precommit: keys-check ## keys-check + secret scan + provenance-verify --strict
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) scan
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) verify --strict
+	@echo "precommit: clean"
+
 # --- wiki skill suite (vendored in the repo, no global skill farm) -------------
 #
 # Every target sources the preflight first: the vendored skills resolve their
@@ -158,3 +203,25 @@ clean: ## Remove caches and build output
 	@find "$(VAULT_ROOT)" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf "$(VAULT_ROOT)/.pytest_cache" "$(VAULT_ROOT)/dist"
 	@echo "Cleaned caches and dist/ (left .venv, .state and .cache alone)."
+# --- peer registry/wg helpers ---
+.PHONY: registry-fetch registry-verify-peer wg-render-peer
+
+registry-fetch:
+	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh
+
+registry-verify-peer: ## verify registry (needs REGISTRY)
+	@test -n "$(REGISTRY)" || (echo "REGISTRY=<registry.json> required" >&2; exit 1)
+	@$(ROLE_ROOT)/scripts/sparknet-registry-verify-peer.sh --registry "$(REGISTRY)"
+
+wg-render-peer: ## render peer wg (needs REGISTRY)
+	@test -n "$(REGISTRY)" || (echo "REGISTRY=<registry.json> required" >&2; exit 1)
+	@$(ROLE_ROOT)/scripts/sparknet-wg-render-peer.sh --registry "$(REGISTRY)" $(if $(OUT),--out $(OUT))
+
+# reference for wiring
+# sparknet-registry-client.py wired via registry-fetch target
+
+# --- election ---
+.PHONY: election-request
+
+election-request:
+	@$(ROLE_ROOT)/scripts/sparknet-election-request.sh
