@@ -1,6 +1,6 @@
 """Phase 4's viability checks, converted from manual ✓ marks into assertions.
 
-Before this file, docs/PHASE_VIABILITY_REPORT.md recorded things like
+Before this file, master-node/plans/PHASE_VIABILITY_REPORT.md recorded things like
 "sync.sh --dry-run: ✓ (env validated, paths checked, structured logging)". Those
 were one-off manual runs on one machine: nobody re-ran them and nothing asserted
 behaviour. The difference here is that each check asserts **no mutation** by

@@ -93,7 +93,7 @@ install-config: ## Show the /etc config diff. Never writes, by design.
 KEY_OUT ?= $(VAULT_ROOT)/.state/keys
 
 keys: ## Generate WireGuard + Ed25519 keypairs into $(KEY_OUT) (secrets, never committed)
-	@./scripts/sparknet-keygen.sh --role node --out "$(KEY_OUT)"
+	@SPARKNET_KEY_DIR="$(KEY_OUT)" ./scripts/sparknet-keygen.sh --role node
 
 wg-render: ## Render wg0.conf from the template. Dry-run; pass APPLY=1 to write at 0600
 	@./scripts/sparknet-wireguard-render.sh $(if $(APPLY),--apply,)

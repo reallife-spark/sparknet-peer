@@ -25,7 +25,8 @@ but inert.
 The Master role lives in `master-node/` and its signing side is built but
 **unused**: the isolated signer exists, and Step 11 built the election that can
 elect a Master, but no node has been elected yet — nothing on disk is Master
-until three members run the ceremony and a signed cluster trust root lands.
+until the members run the ceremony and a unanimous signed cluster trust root
+lands (2 of 2 in a pair, 3 of 3 in the full cluster).
 Until then, `master-node/manifests/master-identity.json` correctly says
 `role: "peer"`.
 

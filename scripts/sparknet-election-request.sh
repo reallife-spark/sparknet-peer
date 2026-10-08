@@ -3,11 +3,12 @@
 #
 # Files this node's bid (operational key included), votes for --candidate
 # (default: this node — a peer requesting to become master votes for itself),
-# waits for the three-signature cluster trust root, co-signs it, and installs
+# waits for the unanimous cluster trust root (every member's co-signature,
+# 2 of 2 in a pair, 3 of 3 in the full cluster), co-signs it, and installs
 # the result on this node's identity.
 #
-# Nothing here grants anything on its own. The root forms only when all three
-# members run their half — the other two run this same script with
+# Nothing here grants anything on its own. The root forms only when every
+# member runs their half — the others run this same script with
 #   CANDIDATE=<requester> make election-request
 # on their own nodes. Install and refusal rules: shared/sparknet-election.py,
 # normative in contracts/consensus-protocol.md.
@@ -75,7 +76,7 @@ esac
 CANDIDATE="${CANDIDATE:-$NODE_ID}"
 
 # The cluster key signs the bid and the vote; without it this node cannot be
-# one of the three. Its public half must also be what membership lists — the
+# a member. Its public half must also be what membership lists — the
 # exchange checks that, and refuses a bid signed by anything else.
 if [ ! -f "$KEY_DIR/cluster.ed25519" ]; then
   echo "no cluster key at $KEY_DIR/cluster.ed25519 — create one first:" >&2

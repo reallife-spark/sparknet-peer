@@ -213,6 +213,30 @@ def _fake_wg_bin(tmp_path: Path) -> Path:
     return bindir
 
 
+def test_make_keys_invokes_keygen_with_matching_interface(tmp_path: Path) -> None:
+    """`make keys` must drive keygen using the interface keygen actually has.
+
+    Regression: the Makefile once passed `--out <dir>` while the script only
+    accepts `--role`/`--force` and reads `SPARKNET_KEY_DIR` from the env, so
+    `make keys` died with "Unknown argument: --out" on every host. The script's
+    own tests pass, which is how the drift survived — this asserts the Makefile
+    invocation, not the script's internals.
+    """
+    key_dir = tmp_path / "keys"
+    proc = subprocess.run(
+        ["make", "-C", str(VAULT_ROOT), "keys", f"KEY_OUT={key_dir}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={**os.environ, "PATH": f"{_fake_wg_bin(tmp_path)}:{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0, f"make keys failed:\n{proc.stdout}\n{proc.stderr}"
+    assert (key_dir / "wg-node.key").is_file()
+    assert (key_dir / "ed25519-node.key.b64").is_file()
+    assert (key_dir / "ed25519-node.pub.b64").is_file()
+
+
 def test_keygen_produces_ed25519_keypair_too(tmp_path: Path) -> None:
     """The header documents an Ed25519 keypair; it must actually produce one.
 

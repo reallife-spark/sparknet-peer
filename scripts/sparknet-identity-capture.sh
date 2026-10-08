@@ -3,6 +3,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "Usage: $0"
+  echo "Captures local user/system identity into"
+  echo "  ${SPARKNET_VAULT_ROOT:-<vault root>}/manifests/user-env-manifest.json"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    *) echo "$0: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 source "$SCRIPT_DIR/sparknet-env.sh"
 
 MANIFEST_OUT="${SPARKNET_VAULT_ROOT}/manifests/user-env-manifest.json"
