@@ -13,9 +13,11 @@ import base64
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -587,3 +589,187 @@ def test_master_request_passes_the_source_gate() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- timeouts, serialisation, persistence, and 500 / 403 hygiene -----------------
+#
+# These back the 2026-10-08 review findings F4 (no socket timeout), F6 (apply
+# not serialised), F7 (replay state in-memory only), F10 (str(exc) in 500s),
+# F12 (hardcoded anchor), F13 (permitted-list disclosure).
+
+
+def _master_public(vault: Path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    blob = (vault / "manifests" / "keys" / "master-ed25519.pub.b64").read_text().strip()
+    return Ed25519PublicKey.from_public_bytes(base64.b64decode(blob, validate=True))
+
+
+def test_slow_client_is_dropped_then_a_fresh_connection_is_served(authorized_vault: Path) -> None:
+    """F4: an idle trickle connection must not hold a listener thread open."""
+    guard = guardmod.Guard(authorized_vault, dry_run=True)
+    handler = guardmod._make_handler(guard, "trickle-guard")
+    handler.timeout = 0.4  # this class is created fresh per call; nothing to restore
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        sock.sendall(b"POST /api/v1/critical-file/patch HTTP/1.1")  # no CRLF: read blocks
+        sock.settimeout(3)
+        assert sock.recv(4096) == b"", "the listener must close an idle trickle connection"
+        sock.close()
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/status", timeout=5) as response:
+            assert response.status == 200, "the guard must still answer on a fresh connection"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_concurrent_patches_are_serialized(authorized_vault: Path, master_key, monkeypatch) -> None:
+    """F6: two overlapping requests must not interleave verification or the write.
+
+    ``apply_patch`` is replaced with a stub that records enter/exit around a
+    sleep, so without the guard's lock the two threads demonstrably overlap and
+    the test fails; with it, the ledger also shows strictly alternating
+    applying/applied blocks.
+    """
+    order: list[str] = []
+
+    def _fake_apply(path, content, *, dry_run: bool = False) -> None:
+        order.append("enter")
+        time.sleep(0.15)
+        order.append("exit")
+
+    monkeypatch.setattr(guardmod, "apply_patch", _fake_apply)
+    monkeypatch.setattr(guardmod.os, "geteuid", lambda: 0)
+    guard = guardmod.Guard(
+        authorized_vault,
+        apply_enabled=True,
+        master_pubkey=_master_public(authorized_vault),
+        dry_run=False,
+    )
+
+    results: dict[int, object] = {}
+
+    def _submit(index: int) -> None:
+        try:
+            results[index] = guard.handle_patch(_packet(master_key, nonce=f"c{index}", request_id=f"r{index}"))
+        except Exception as exc:  # noqa: BLE001 - surfaces in the assertion below
+            results[index] = exc
+
+    threads = [threading.Thread(target=_submit, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert order == ["enter", "exit", "enter", "exit"], f"patches interleaved: {order}"
+    for result in results.values():
+        assert isinstance(result, dict), f"patch request failed: {result}"
+        assert result["status"] == "PATCH_APPLIED_AND_RE-LOCKED"
+
+    ledger = json.loads((authorized_vault / "blockchain" / "guard-audit.json").read_text())
+    events = [block["event"] for block in ledger["blocks"]]
+    assert events[-4:] == [
+        "patch_applying",
+        "patch_applied",
+        "patch_applying",
+        "patch_applied",
+    ], f"ledger must show strictly alternating transactions, got {events}"
+
+
+def test_replay_state_survives_a_restart(authorized_vault: Path, master_key) -> None:
+    """F7: bouncing the daemon must not re-open a spent approval.
+
+    A fresh ``Guard`` on the same vault is a restart: it loads the persisted
+    store and must refuse the identical nonce/request_id pair that a previous
+    process already spent.
+    """
+    guard_one = guardmod.Guard(authorized_vault, master_pubkey=_master_public(authorized_vault), dry_run=True)
+    result = guard_one.handle_patch(_packet(master_key, nonce="persist", request_id="persist"))
+    assert result["status"] == "PATCH_VERIFIED_DRY_RUN"
+
+    store = authorized_vault / ".state" / "guard-replay.json"
+    assert store.is_file(), "the replay store must be written after every accepted approval"
+    assert "persist:persist" in store.read_text()
+
+    restarted = guardmod.Guard(authorized_vault, master_pubkey=_master_public(authorized_vault), dry_run=True)
+    with pytest.raises(guardmod.Refusal) as excinfo:
+        restarted.handle_patch(_packet(master_key, nonce="persist", request_id="persist"))
+    assert excinfo.value.code == "replayed"
+
+
+def test_mode_probe_targets_the_policy_anchor_not_a_literal(authorized_vault: Path, monkeypatch) -> None:
+    """F12: the reachability probe must dial the configured anchor address.
+
+    If the anchor reverted to a hardcoded constant, the recorded probe target
+    would be the stale literal and this test fails.
+    """
+    policies_path = authorized_vault / "manifests" / "security-policies.json"
+    policies = json.loads(policies_path.read_text())
+    policies.setdefault("wireguard", {})["master_anchor_ip"] = "10.99.0.1"
+    policies_path.write_text(json.dumps(policies, indent=2) + "\n")
+
+    connects: list[tuple[str, int]] = []
+
+    class _Probe:
+        def __init__(self, *args):  # noqa: ANN002, ANN003
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):  # noqa: ANN002, ANN003
+            return False
+
+        def settimeout(self, seconds) -> None:  # noqa: ANN001
+            pass
+
+        def connect(self, target) -> None:  # noqa: ANN001
+            connects.append(target)
+
+        def getsockname(self):  # noqa: ANN202
+            return ("10.20.0.5", 0)
+
+    class _Socket:
+        AF_INET = 2
+        SOCK_DGRAM = 2
+
+        @staticmethod
+        def socket(*args):  # noqa: ANN002
+            return _Probe()
+
+    monkeypatch.setattr(guardmod, "socket", _Socket)
+    monkeypatch.setenv("SPARKNET_OVERLAY_IP", "10.20.0.5")
+    guard = guardmod.Guard(authorized_vault)
+    assert guard.mode() == "anchored"
+    assert connects == [("10.99.0.1", 51820)], "the probe must dial the policy's anchor, not a literal"
+
+
+def test_off_overlay_refusal_does_not_disclose_the_source_allowlist(
+    harness: Harness, master_key, monkeypatch
+) -> None:
+    """F13: a rejected caller learns it is off-overlay, not which sources pass."""
+    monkeypatch.setattr(harness.guard, "permitted_sources", lambda: {"203.0.113.9"})
+    status, body = harness.post(_packet(master_key))
+    assert status == 403
+    assert body["code"] == "off_overlay"
+    assert "permitted" not in body
+    assert "203.0.113.9" not in str(body)
+
+
+def test_internal_errors_do_not_leak_internals(harness: Harness, master_key, monkeypatch, capsys) -> None:
+    """F10: a 500 must carry a stable reason, with the detail on stderr only."""
+    def _boom() -> list[str]:
+        raise RuntimeError("SECRET_GUARD_DETAIL")
+
+    monkeypatch.setattr(harness.guard, "authorization_capabilities", _boom)
+    status, body = harness.post(_packet(master_key))
+    assert status == 500
+    assert body["code"] == "internal_error"
+    assert "SECRET_GUARD_DETAIL" not in str(body)
+    assert "SECRET_GUARD_DETAIL" in capsys.readouterr().err

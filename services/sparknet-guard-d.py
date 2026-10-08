@@ -45,8 +45,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -166,11 +167,56 @@ class AuditLedger:
 
 
 class ReplayGuard:
-    """nonce / request_id / expiry exactly as manifests/security-policies.json demands."""
+    """nonce / request_id / expiry exactly as manifests/security-policies.json demands.
 
-    def __init__(self, ttl_seconds: int = 60) -> None:
+    Replay state is persisted when ``store_path`` is given, so a restart
+    cannot re-open a used approval: without this, bouncing the daemon erased
+    the only record that a nonce was spent.  The store is written atomically
+    (temp + ``os.replace``) on every spend and pruned to the last two TTLs on
+    load, the same bound as in-memory state.
+    """
+
+    def __init__(self, ttl_seconds: int = 60, store_path: Path | None = None) -> None:
         self.ttl = ttl_seconds
         self._seen: dict[str, float] = {}
+        self.store_path = store_path
+        if store_path is not None:
+            self._load()
+
+    def _load(self) -> None:
+        if self.store_path is None or not self.store_path.is_file():
+            return
+        try:
+            raw = json.loads(self.store_path.read_text())
+            cutoff = datetime.now(timezone.utc).timestamp() - self.ttl * 2
+            self._seen = {
+                str(key): float(value)
+                for key, value in raw.get("seen", {}).items()
+                if float(value) >= cutoff
+            }
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            # A corrupt store must not silently reset replay protection, but it
+            # also cannot be trusted; warn loudly and start empty so the daemon
+            # still comes up.
+            print(f"[guard] WARNING: replay store unreadable ({exc}); starting empty", file=sys.stderr)
+            self._seen = {}
+
+    def _save(self) -> None:
+        if self.store_path is None:
+            return
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tempfile.NamedTemporaryFile(
+            "w", dir=self.store_path.parent, prefix=".replay.", suffix=".tmp", delete=False, encoding="utf-8"
+        )
+        try:
+            with tmp:
+                json.dump({"version": "1.0", "seen": self._seen}, tmp)
+                tmp.write("\n")
+            os.replace(tmp.name, self.store_path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp.name)
+            raise
 
     def check(self, nonce: str, request_id: str, issued_at: str, expires_at: str, now: datetime | None = None) -> None:
         now = now or datetime.now(timezone.utc)
@@ -204,6 +250,7 @@ class ReplayGuard:
         # Bound memory: prune anything past twice the TTL.
         cutoff = now.timestamp() - self.ttl * 2
         self._seen = {k: v for k, v in self._seen.items() if v >= cutoff}
+        self._save()
 
 
 # --- privileged file operations ---------------------------------------------
@@ -290,13 +337,13 @@ def enforce_immutability(paths: list[str], *, dry_run: bool = False) -> list[str
     return enforced
 
 
-def _load_authz_module():
-    """Import the shared sparknet-authz.py from the parent vault.
+def _load_shared_module(filename: str, modname: str):
+    """Import a shared `filename` (hyphenated, so importlib) from the parent vault.
 
-    It lives once in <fabric>/shared/ because the Master signs with it and a
-    peer verifies with it — two copies could drift and then silently stop
-    validating each other. SPARKNET_SHARED_DIR overrides the location for a
-    deployment that stages contracts and shared code elsewhere.
+    It lives once in <fabric>/shared/ because the Master and a peer must agree
+    on the byte-for-byte implementation — two copies could drift and then
+    silently stop validating each other. SPARKNET_SHARED_DIR overrides the
+    location for a deployment that stages contracts and shared code elsewhere.
 
     The filename contains a hyphen, so it cannot be imported by name; use
     importlib and register it in sys.modules (needed for @dataclass).
@@ -306,22 +353,42 @@ def _load_authz_module():
     candidates = []
     env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
     if env_shared:
-        candidates.append(Path(env_shared) / "sparknet-authz.py")
-    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / "sparknet-authz.py")
-    candidates.append(SERVICE_DIR / "sparknet-authz.py")
+        candidates.append(Path(env_shared) / filename)
+    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / filename)
+    candidates.append(SERVICE_DIR / filename)
 
     path = next((c for c in candidates if c.is_file()), None)
     if path is None:
         return None
-    if "sparknet_authz" in sys.modules:
-        return sys.modules["sparknet_authz"]
-    spec = importlib.util.spec_from_file_location("sparknet_authz", path)
+    if modname in sys.modules:
+        return sys.modules[modname]
+    spec = importlib.util.spec_from_file_location(modname, path)
     if spec is None or spec.loader is None:
         return None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_authz_module():
+    """The shared sparknet-authz.py: verification and signing, one copy."""
+    return _load_shared_module("sparknet-authz.py", "sparknet_authz")
+
+
+def _load_http_module():
+    """The shared sparknet-http.py: the one handler base every listener uses.
+
+    The handler class is where the socket timeout lives (see
+    TimeoutHandler.DEFAULT_REQUEST_TIMEOUT_SECONDS).  The guard must not fall
+    back to a bare BaseHTTPRequestHandler when the shared file is missing —
+    that would silently revert to unbounded reads — so a hard error beats a
+    quiet degradation here.
+    """
+    shared = _load_shared_module("sparknet-http.py", "sparknet_http")
+    if shared is None:
+        raise RuntimeError("shared/sparknet-http.py not found; the guard handler cannot be built")
+    return shared
 
 
 # --- guard -------------------------------------------------------------------
@@ -341,9 +408,15 @@ class Guard:
         self.vault_root = vault_root
         self.apply_enabled = apply_enabled
         self.dry_run = dry_run
-        self.replay = replay or ReplayGuard()
+        self.replay = replay or ReplayGuard(
+            store_path=vault_root / ".state" / "guard-replay.json"
+        )
         self.master_pubkey = master_pubkey
         self.ledger = ledger or AuditLedger(vault_root / "blockchain" / "guard-audit.json")
+        # One apply at a time: ThreadingHTTPServer hands each request its own
+        # thread, and verification, replay bookkeeping, ledger appends and the
+        # privileged write must never interleave.
+        self._apply_lock = threading.Lock()
 
     # -- configuration ------------------------------------------------------
 
@@ -387,7 +460,10 @@ class Guard:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
                 probe.settimeout(0.5)
-                probe.connect(("10.100.0.1", 51820))
+                # The anchor comes from security-policies.json, never a literal:
+                # a re-added constant would silently carry a stale private range
+                # through a topology change.
+                probe.connect((self.master_anchor_address(), 51820))
                 local = probe.getsockname()[0]
             return "anchored" if local == address else "standalone"
         except OSError:
@@ -427,6 +503,16 @@ class Guard:
     # -- request handling ---------------------------------------------------
 
     def handle_patch(self, packet: dict[str, Any]) -> dict[str, Any]:
+        """Decide and apply one patch request.
+
+        Serialized: the ledger append is a read-modify-write and the write is
+        privileged, so ``ThreadingHTTPServer`` concurrency must not interleave
+        two requests.  The logic lives in ``_handle_patch_locked``.
+        """
+        with self._apply_lock:
+            return self._handle_patch_locked(packet)
+
+    def _handle_patch_locked(self, packet: dict[str, Any]) -> dict[str, Any]:
         payload_b64 = packet.get("payload")
         signature_b64 = packet.get("signature")
         if not isinstance(payload_b64, str) or not isinstance(signature_b64, str):
@@ -534,7 +620,9 @@ class Guard:
 
 
 def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface is inherently branchy
-    class Handler(BaseHTTPRequestHandler):
+    _shared_http = _load_http_module()
+
+    class Handler(_shared_http.TimeoutHandler):
         server_version = "sparknet-guard/1.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:  # quieter than BaseHTTPRequestHandler
@@ -575,13 +663,16 @@ def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface 
             # anchor: the server binds the node's own overlay address, so a
             # legitimate request arrives *from* the Master, never from us.
             if client not in permitted:
+                # "permitted" is deliberately absent from the body: disclosing
+                # the source allow-list to a caller the protocol already
+                # rejected hands an off-overlay probe the exact addresses to
+                # spoof next time. The refusal is reason enough.
                 self._send(
                     403,
                     {
                         "error": "off-overlay",
                         "code": "off_overlay",
                         "client": client,
-                        "permitted": sorted(permitted),
                     },
                 )
                 return
@@ -603,7 +694,11 @@ def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface 
             except Refusal as refusal:
                 self._send(refusal.status, {"error": refusal.detail or refusal.code, "code": refusal.code})
             except Exception as exc:  # pragma: no cover - defensive
-                self._send(500, {"error": str(exc), "code": "internal_error"})
+                # Never echo the exception: it can name files, keys or paths
+                # the caller has no right to know. Log it where only an
+                # operator will read it.
+                print(f"[guard] internal error on {self.path}: {exc!r}", file=sys.stderr)
+                self._send(500, {"error": "internal error", "code": "internal_error"})
 
     return Handler
 
