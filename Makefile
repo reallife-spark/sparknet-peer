@@ -18,7 +18,9 @@ PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),python3)
 .PHONY: help env-init validate test lint devtools provision dist bundle install-units \
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
         peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture clean \
-        provenance-verify user-init provenance-append ingest precommit shims-check keys-check
+        provenance-verify user-init provenance-append ingest precommit shims-check keys-check \
+        ai-stack-config container-build container-load container-config container-preflight container-up \
+        container-health container-down model-generate model-verify model-build model-serve
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -233,3 +235,78 @@ election-request: ## run this node's part of the election (URL= CANDIDATE= NODE_
 	  $(if $(IDENTITY),--identity "$(IDENTITY)") \
 	  $(if $(KEY_DIR),--key-dir "$(KEY_DIR)") \
 	  $(if $(WAIT),--wait-seconds "$(WAIT)")
+
+ai-stack-config: ## Validate the node AI stack compose parses (no images pulled)
+	@docker compose -f "$(VAULT_ROOT)/configs/ai-stack/docker-compose.yml" config --quiet
+
+# --- node container (peer PLAN Step 2) ----------------------------------------
+#
+# `make dist` assembles the bundle first: what runs inside the image is exactly
+# what ships in the bundle — one code path. The staged tarball is gitignored.
+# OPENCODE_VERSION / CONTAINER_PLATFORMS are the knobs a rebuild changes; the
+# image and compose must agree on OPENCODE_VERSION (the test suite asserts it).
+
+OPENCODE_VERSION ?= 1.18.35
+CONTAINER_PLATFORMS ?= linux/arm64,linux/amd64
+# The buildkit sandbox DNS on the fabric host is unreliable (apt/git clone fail
+# with "Temporary failure resolving"); joining the host network namespace makes
+# the build deterministic. Harmless for the deployed path (a registry push).
+CONTAINER_BUILD_NET ?= --network=host
+# The local store cannot --load a manifest list; this maps uname to buildx.
+HOST_ARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+
+container-build: ## make dist, stage the bundle, buildx both architectures (registry-ready)
+	@$(MAKE) --no-print-directory dist $(if $(FROM_GIT),FROM_GIT=$(FROM_GIT),)
+	@mkdir -p "$(VAULT_ROOT)/container/context"
+	@cp "$$(ls -t "$(FABRIC_ROOT)"/dist/sparknet-peer-*.tar.gz | head -1)" \
+		"$(VAULT_ROOT)/container/context/sparknet-peer.tar.gz"
+	@docker buildx build $(CONTAINER_BUILD_NET) --platform "$(CONTAINER_PLATFORMS)" \
+		-t "sparknet-peer-node:$(OPENCODE_VERSION)" \
+		-f "$(VAULT_ROOT)/container/Dockerfile" "$(FABRIC_ROOT)"
+	@docker buildx build $(CONTAINER_BUILD_NET) --platform "$(CONTAINER_PLATFORMS)" \
+		-t "sparknet-node-anchor:0.0.20230223" \
+		-f "$(VAULT_ROOT)/container/anchor/Dockerfile" "$(VAULT_ROOT)/container"
+
+container-load: ## Build the HOST architecture with --load, for local runs/tests
+	@docker buildx build $(CONTAINER_BUILD_NET) --load --platform "linux/$(HOST_ARCH)" \
+		-t "sparknet-peer-node:$(OPENCODE_VERSION)" \
+		-f "$(VAULT_ROOT)/container/Dockerfile" "$(FABRIC_ROOT)"
+	@docker buildx build $(CONTAINER_BUILD_NET) --load --platform "linux/$(HOST_ARCH)" \
+		-t "sparknet-node-anchor:0.0.20230223" \
+		-f "$(VAULT_ROOT)/container/anchor/Dockerfile" "$(VAULT_ROOT)/container"
+
+container-config: ## Validate the node container compose parses (no images pulled)
+	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" config --quiet
+
+container-preflight: ## Prove chattr +i holds on the .state filesystem before relying on it
+	@./scripts/sparknet-chattr-preflight.sh
+
+container-up: container-preflight ## Preflight, then bring the node container up
+	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" up -d
+
+container-health: ## Per-service container health
+	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" ps -a
+
+container-down: ## Tear the node container down
+	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" down
+
+# --- Step 7 MASTERSPIKE: the llm-wiki format as an inference artifact ----------
+# Both the Ollama Modelfile and the vLLM system-prompt artifact are generated
+# from .opencode/skills/llm-wiki/SKILL.md (scripts/sparknet-masterspike.py), so
+# switching inference backends cannot silently drop the knowledge format. The
+# model carries a format, never a capability: authority stays Ed25519 in the
+# Master. model-build/serve need a real Ollama daemon; model-verify does not.
+
+.PHONY: model-generate model-verify model-build model-serve
+
+model-generate: ## Regenerate the MASTERSPIKE artifacts from the llm-wiki skill
+	@$(PY) scripts/sparknet-masterspike.py generate
+
+model-verify: ## Fail if the MASTERSPIKE artifacts diverge from the llm-wiki skill
+	@$(PY) scripts/sparknet-masterspike.py verify
+
+model-build: ## Create the Ollama MASTERSPIKE model (requires a running ollama server)
+	@ollama create sparknet-masterspike -f "manifests/masterspike/Modelfile"
+
+model-serve: ## Serve MASTERSPIKE through a running Ollama daemon
+	@ollama serve

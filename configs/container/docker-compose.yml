@@ -1,0 +1,54 @@
+# The node container: app + anchor, wired as committed compose.
+#
+# Two services. The anchor owns the network namespace and the tunnel; the app
+# is the opencode node and joins the anchor's namespace, so recreating the app
+# leaves the tunnel standing. Both images are pinned and built by
+# `make container-build`; this file only wires runtime facts that the plan
+# asserts: .state as a HOST bind mount (never a named volume), the tunnel
+# ownership boundary, the no-GPU healthcheck, and nothing else reaching in.
+
+name: sparknet-node-container
+
+services:
+  # The tunnel sidecar. cap_add NET_ADMIN + NET_RAW and /dev/net/tun are its
+  # whole privilege surface; the wireguard config is read-only host content
+  # (rendered by make wg-render-peer). No key material is ever mounted here.
+  anchor:
+    image: sparknet-node-anchor:0.0.20230223
+    container_name: sparknet-anchor
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun
+    volumes:
+      - type: bind
+        source: ${SPARKNET_WG_CONF:-./wireguard/sparknet.conf}
+        target: /etc/wireguard/sparknet.conf
+        read_only: true
+    restart: unless-stopped
+
+  # The node. Shares the anchor's namespace by construction: nothing else may
+  # be its network. .state is bound from the host and never a named volume, so
+  # keys survive app recreation and never leak into image layers.
+  app:
+    image: sparknet-peer-node:1.18.35
+    container_name: sparknet-node
+    network_mode: "service:anchor"
+    depends_on:
+      - anchor
+    environment:
+      # Inside the container the state dir is the bind-mounted path; the
+      # entrypoint also defaults to it. On the host it lives under the vault.
+      SPARKNET_STATE_DIR: /srv/sparknet/peer-node/.state
+    volumes:
+      - type: bind
+        source: ${SPARKNET_STATE_DIR:-../.state}
+        target: /srv/sparknet/peer-node/.state
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/sparknet-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped

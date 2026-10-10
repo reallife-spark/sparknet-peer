@@ -170,13 +170,16 @@ def test_test_approval_is_gone_and_the_bridge_cannot_write_the_ledger() -> None:
     """The flag is deleted rather than corrected: no second block builder.
 
     A bridge that can append a block of its own invention is how the ledger
-    shapes diverged. The strongest form of the guarantee is not "the bridge
-    appends safely" but "the bridge cannot append at all", so this asserts the
-    refusal *and* that every surviving mode leaves a copy's ledger untouched.
+    shapes diverged. The strongest form of the guarantee is now two-fold and
+    tighter than "the bridge appends safely": the source never *names* the
+    ledger (so it cannot write a path it cannot spell), and every surviving mode
+    leaves a copy's ledger untouched. Step 4 keeps the ledger out of this file
+    entirely — capture/promote/patch append through shared/sparknet-provenance.py,
+    whose own tests own the block shape.
     """
     source = (VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py").read_text()
     assert "add_argument(\"--test-approval\")" not in source, "the ledger-writing flag came back"
-    assert "json.dump" not in source, "the bridge serialises nothing"
+    assert "blockchain" not in source, "the bridge never names the ledger path"
 
     before = LEDGER.read_bytes()
 

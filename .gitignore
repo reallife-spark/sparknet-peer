@@ -37,3 +37,7 @@ dist/
 privkey*
 id_ed25519*
 *.seed
+
+# build artifacts (peer Step 2 container)
+container/context/
+configs/container/wireguard/sparknet.conf

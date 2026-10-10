@@ -4,11 +4,15 @@
 > The plan and its cursor live in `PLAN.md` — this file mirrors it, it does not
 > own it. Per-session detail belongs in `sessions/YYYY-MM-DD.md`.
 
-Updated: 2026-10-04
+Updated: 2026-10-10
 
 ## Standing State
 
-- **Plan cursor**: `PLAN.md` `current: 1` — Step 1 (post-split verification).
+- **Plan cursor**: `PLAN.md` `current: done` — the peer build-out is terminal.
+  Steps 1–9 are complete (container, grants, bridge, Open WebUI surface,
+  conversation passing, `MASTERSPIKE`, sharing regime, node AI stack); each
+  carries a `DoD: confirm: user` leg for the live/target-node behaviour this
+  host cannot exercise. New roadmap work gets a **new** step.
 - **Vault**: this directory (`peer-node/`), categories: concepts, entities,
   skills, references, synthesis, journal.
 - **Config**: `.env` (`VAULT_PATH`); staged writes: false.

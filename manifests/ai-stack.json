@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "contract": "node-ai-stack",
+  "description": "A node's own AI stack, as committed config: its own model server (Ollama) and its own chat surface (Open WebUI), the declarative slice of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md. Read by peer-node/tests/test_node_ai_stack.py, which fails the build if the committed topology stops being the loopback-only, own-server-only, no-authority surface the design requires. Cluster fan-out is NOT here: accepting a signed subtask belongs to the task ingress + cluster client (item 5), so nothing in this file can be a vector for delegated inference.",
+  "authored": "2026-10-09",
+  "source": "CLUSTER_INFERENCE_DESIGN.md §Docker packaging",
+  "status": "declared, not deployed",
+
+  "topology": {
+    "services": ["ollama", "open-webui"],
+    "compose_file": "peer-node/configs/ai-stack/docker-compose.yml",
+    "bind_host": "127.0.0.1",
+    "every_port_is_loopback_only": true,
+    "model_port": "127.0.0.1:11434:11434 (OpenAI-compatible at /v1)",
+    "webui_port": "127.0.0.1:8080:8080",
+    "why_loopback_only": "A node's own prompts never leave the node's containers. Only a served subtask crosses the overlay, and no subtask can arrive here until item 5. Binding 0.0.0.0 would put the node's knowledge on every interface at once."
+  },
+
+  "gpu": {
+    "declared_in_committed_file": false,
+    "why": "GPU is never required to run, only to change throughput. The committed file declares none; the host deployer adds a device reservation on a node that has one. Docker cannot partition VRAM, so GPU sharing is configured inside the model server, never by slicing containers."
+  },
+
+  "knowledge_bases": {
+    "vault": "the only knowledge base",
+    "open_webui_rag": {
+      "RAG_INGESTION_ENABLED": "false",
+      "why": "Open WebUI's own vector store would become a second, grant-less knowledge base — the same rule as the Master admin surface. A parallel store cannot be revoked with a signed entry, which makes it the quieter way to lose control of what the fabric knows."
+    }
+  },
+
+  "capabilities": {
+    "granted_to_this_stack": [],
+    "explicitly_not_granted": ["sign", "cluster-dispatch", "cluster-serve"],
+    "why": "A node's own prompts are already free and need no capability (COMPUTE_CAPABILITY_DESIGN.md draws the same line: only delegated work is gated). 'cluster-serve' is what a *delegated subtask* would need, and no subtask can reach this stack until item 5; 'sign' belongs to the Master alone and is structurally unobtainable here — the stack mounts no key, no signer socket and no $SPARKNET_STATE_DIR."
+  },
+
+  "webui_surface": {
+    "contract": "peer-node/manifests/agent-models.json (schema sparknet-agent-models/1)",
+    "selectable_models": ["plan", "build", "vault", "node-orchestrator", "masterspike"],
+    "declared_not_database_state": "Open WebUI's panel is a database click; the surface lives in agent-models.json + this compose env so a redeploy cannot lose it (peer PLAN Step 5 DoD 5).",
+    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=plan,build,vault,node-orchestrator,masterspike, DEFAULT_MODELS=plan",
+    "bridge_route": "OPENAI_API_BASE_URLS=http://host.docker.internal:4096/v1 — this node's dispatch bridge, loopback 4096, reached through extra_hosts host.docker.internal:host-gateway. Live reachability from the webui container past the bridge's loopback gate is a target-node check (DoD: confirm: user), like the rest of this stack.",
+    "bridge_key": "OPENAI_API_KEYS expands a deploy-time signed grant ($SPARKNET_WEBUI_BRIDGE_GRANT); no token is committed and the compose fails loudly while it is unset.",
+    "approve_deny": "a permission request surfaces as an Approve/Deny card and resolves through POST /session/:id/permissions/:permissionID on the dispatch bridge (peer PLAN Step 5 DoD 2); the decision is recorded in the grant-keyed session.",
+    "rag": "still disabled (RAG_INGESTION_ENABLED=false) — the vault is the only knowledge base (peer PLAN Step 5 DoD 4)."
+  },
+
+  "conversation_passing": {
+    "contract": "the /session/:id native verbs on the dispatch bridge (peer PLAN Step 6)",
+    "message": "POST /session/:id/message accepts an 'agent' and hands the conversation off with history intact (Step 6 DoD 1)",
+    "fork": "POST /session/:id/fork at a message index creates a child session carrying the shared prefix; the original stays whole (Step 6 DoD 2)",
+    "children_and_shares": "GET /session/:id/children lists the branch; POST/GET/DELETE /session/:id/share[/:id] declare a session-view/session-handoff share in 'open' status (Step 6 DoD 3)",
+    "native_primitives": "only native opencode/OpenAI verbs; no custom passing mechanism (Step 6 note)",
+    "regime_not_here": "clocks, expiry, cross-node transfer and the kb-*/full share kinds belong to Step 8 and are deliberately absent"
+  },
+
+  "masterspike": {
+    "contract": "peer-node/manifests/masterspike.json",
+    "source": ".opencode/skills/llm-wiki/SKILL.md",
+    "temperature": 0.1,
+    "artifacts": "Modelfile + vllm-system-prompt.md, both generated from the one source by scripts/sparknet-masterspike.py (peer PLAN Step 7 DoD 1/2); `make model-verify` fails on divergence or a moved source (DoD 3)",
+    "selectable": "masterspike is in agent-models.json and MODEL_FILTER_LIST (DoD 4)",
+    "capability_boundary": "the model holds no signing capability — the artifacts are text with no key, no signer socket and no state dir, and authority stays Ed25519 in the Master, never a prompt (DoD 4)"
+  },
+
+  "signing_boundary": {
+    "reached_from_here": false,
+    "key_material": "none mounted",
+    "signer_socket": "none mounted",
+    "state_dir": "none mounted",
+    "why_structural": "A deny rule governs a process that may later ignore it. This stack is declared without the mounts a key or a socket would need, which makes the boundary structural rather than a permission statement."
+  },
+
+  "not_built_yet": "This is a declaration, not a deployment. No model server or Open WebUI is installed on this host, no image is pulled, and nothing binds 11434 or 8080; the MASTERSPIKE Ollama model is likewise not created (this host has an `ollama` binary but no running daemon — `make model-build` will refuse with Ollama's own error until one is served). The deployed healthcheck — pull the images on a target node, run the stack, confirm the surfaces answer with no GPU present, create and serve the model — is `DoD: confirm: user`. The assertions in test_node_ai_stack.py and test_masterspike.py are read off these files, the compose file and the generated artifacts, and are therefore only as strong as the files: they prove the declared topology and the artifacts are coherent, not that a real deployment held."
+}

@@ -1,0 +1,83 @@
+# The node's own AI stack, as committed config.
+#
+# Every node runs its own model server and its own Open WebUI — the Master is a
+# node like the others for its own prompts. This file is the declarative slice
+# of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md: it is configured here so it
+# survives a redeploy, and it is deliberately NOT DEPLOYED — no model server is
+# installed on this host, and pulling multi-gigabyte images is a target-node
+# action that belongs to the deployed healthcheck (DoD: confirm: user).
+#
+# The single rule this file exists to enforce: a node's OWN prompts never leave
+# these containers. Both services bind to loopback only — nothing in the stack
+# is reachable from the overlay or from a neighbouring node, and the stack holds
+# no key, no signer socket and no $SPARKNET_STATE_DIR mount.
+#
+# Cluster fan-out is deliberately absent here. Accepting a signed subtask is the
+# task ingress + cluster client of adoption item 5; until that exists, nothing in
+# this file can be a vector for delegated inference, and none of the cluster
+# capabilities (`cluster-dispatch`, `cluster-serve`) is obtainable from it.
+#
+# GPU (DGX Spark, x86 GPU servers) is never required to *run*; it only changes
+# throughput, so the committed file declares none — the host deployer adds
+# `deploy.resources.reservations.devices` on a node that has one. Docker cannot
+# partition VRAM, so GPU sharing is configured inside the model server, never by
+# slicing containers.
+name: sparknet-node-ai-stack
+
+services:
+  # The node's own model server. OpenAI-compatible at 127.0.0.1:11434/v1.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sparknet-ollama
+    restart: unless-stopped
+    # Loopback only: the model port belongs to this node's Open WebUI (and,
+    # later, its task ingress) and to nothing else. 0.0.0.0 here would put the
+    # node's knowledge on every interface at once.
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+  # The node's own chat surface, pointed at THIS node's own model server.
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: sparknet-webui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # The vault is the only knowledge base — the same rule as the Master admin
+      # surface (master-node/configs/admin-surface/docker-compose.admin.yml sets
+      # RAG_INGESTION_ENABLED: "false"). Open WebUI's own vector store would be a
+      # second body of knowledge that no signed entry can revoke.
+      RAG_INGESTION_ENABLED: "false"
+      # This node's own server, by compose service name. Never an overlay address
+      # and never a remote node's: a node that answers with another node's model
+      # stopped being a node.
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      WEBUI_AUTH: "true"
+      ENABLE_SIGNUP: "false"
+      # Step 5 surface — the node's agents as OpenAI-compatible models on THIS
+      # node's dispatch bridge (loopback 4096 pre-network; `host-gateway` maps
+      # `host.docker.internal` to this host). The four roles come from
+      # ../manifests/agent-models.json: they are declared here, not clicked into
+      # Open WebUI's database, so a redeploy cannot lose the surface.
+      OPENAI_API_BASE_URLS: "http://host.docker.internal:4096/v1"
+      # A signed session grant for this stack, mounted at deploy time. Never a
+      # committed token — grants expire, and a standing bearer token in the tree
+      # would be the quieter way to lose authority. Compose fails loudly while
+      # the variable is unset.
+      OPENAI_API_KEYS: "${SPARKNET_WEBUI_BRIDGE_GRANT:?set at deploy time; do not commit a grant}"
+      MODEL_FILTER_ENABLED: "true"
+      MODEL_FILTER_LIST: "plan,build,vault,node-orchestrator,masterspike"
+      DEFAULT_MODELS: "plan"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - ollama
+
+volumes:
+  # A named volume is right here (model weights are server state, like the admin
+  # surface's open-webui-data). The node-VAULT `.state` bind-mount rule is about
+  # key material and authz state, which this stack must never hold.
+  ollama-models:

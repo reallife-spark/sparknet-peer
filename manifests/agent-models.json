@@ -1,0 +1,46 @@
+{
+  "schema": "sparknet-agent-models/1",
+  "contract": "peer-webui-surface",
+  "description": "The Open WebUI surface of the node (peer PLAN Step 5 DoD 1): plan, build, vault, the node orchestrator and MASTERSPIKE are selectable as models, each bound to the agent that owns it. This file is the committed, versioned declaration — Open WebUI panel state is a database click and must never be the source of truth, because a redeploy must not lose the surface. Read by the dispatch bridge (`/v1/models`) and by peer-node/tests/test_webui_surface.py, which fails the build if the declared surface and the bridge disagree.",
+  "authored": "2026-10-10",
+  "status": "declared, not deployed",
+
+  "selectable": [
+    {
+      "id": "plan",
+      "agent": "plan",
+      "label": "Plan (node agent)",
+      "voice": "compile a plan, then hand off"
+    },
+    {
+      "id": "build",
+      "agent": "build",
+      "label": "Build (node agent)",
+      "voice": "implement, then verify"
+    },
+    {
+      "id": "vault",
+      "agent": "vault",
+      "label": "Vault (node agent)",
+      "voice": "know the vault"
+    },
+    {
+      "id": "node-orchestrator",
+      "agent": "sparknet-node",
+      "label": "Node Orchestrator",
+      "voice": "run the node"
+    },
+    {
+      "id": "masterspike",
+      "agent": "masterspike",
+      "label": "MASTERSPIKE (llm-wiki format)",
+      "voice": "carry the Master role and the llm-wiki knowledge format",
+      "served_by": "ollama",
+      "capabilities": [],
+      "contract": "peer-node/manifests/masterspike.json",
+      "why": "a format, never a capability: authority is Ed25519 in the Master, not a prompt (peer PLAN Step 7 DoD 4)"
+    }
+  ],
+
+  "why_these_agents": "plan and build are opencode built-ins (present in any opencode node); `vault` and `sparknet-node` are the node's own agent papers, bundled with the role; `masterspike` is the Step 7 format carrier — a model, selectable like the agents, that holds no signing capability (peer PLAN Step 7 DoD 4). Each id here is a role the node births, not a model the bridge invents — the bridge still discovers on-disk pods (`.opencode/agents/*.md`, `agents/*/`) as its second, unselectable tier."
+}
