@@ -12,10 +12,12 @@ Updated: 2026-10-11
   are complete and **deployed live** on cluster2 (node131 = Master-signer@192.168.178.131,
   node133 = peer@192.168.178.133, each running Open WebUI on `0.0.0.0:8181`,
   the dispatch bridge on `127.0.0.1:4096`, Ollama, ChromaDB on 18000, the
-  `SPARKNET-FW` host firewall, and `sparknet-masterspike`). Remaining human
-  confirms are limited to live-UI behaviour (approve/deny card rendering, the
-  per-session `vault-access` toggle) — agent execution inside a running opencode
-  process is still a later fabric step (the bridge records+routes by design).
+  `SPARKNET-FW` host firewall, and `sparknet-masterspike`). The operator
+  visually confirmed the live-UI legs 2026-10-11 (approve/deny card rendering,
+  the per-session `vault-access` toggle); only a full node reboot is left
+  unexercised (docker-restart survival is proven). Agent execution inside a
+  running opencode process is still a later fabric step (the bridge
+  records+routes by design).
 - **Vault**: this directory (`peer-node/`), numbered PARA layout; categories:
   concepts, entities, skills, references, synthesis, journal (legacy names are
   symlinks).
