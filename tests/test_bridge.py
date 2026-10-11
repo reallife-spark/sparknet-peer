@@ -230,6 +230,25 @@ def test_plain_routes_require_a_presented_grant(server):
     assert payload["reason"] == "missing-grant"
 
 
+def test_openapi_spec_is_served_on_the_plain_surface(server, ctx):
+    """Open WebUI fetches the vault tool spec from the bridge itself.
+
+    The tool-server connection points at ``GET /v1/openapi.json``, so the spec
+    must be served as a normal grant-checked plain route — matching the
+    committed manifest exactly.
+    """
+    committed = json.loads((VAULT_ROOT / "manifests" / "vault-openapi.json").read_text())
+    status, payload = server.request("GET", "/v1/openapi.json")
+    assert status == 401
+    assert payload["reason"] == "missing-grant"
+
+    status, payload = server.request("GET", "/v1/openapi.json", token=_bearer(_grant(ctx)))
+    assert status == 200
+    assert payload == committed
+    assert "/vault/capture" in payload["paths"]
+    assert payload["servers"][0]["url"] == "http://127.0.0.1:4096"
+
+
 def test_unknown_bearer_is_refused_before_any_route(server):
     grant = {"grant_id": "forged", "signature_b64": "AAAA"}
     status, payload = server.request("GET", "/v1/models", token=_bearer(grant))

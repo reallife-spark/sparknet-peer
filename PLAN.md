@@ -529,6 +529,38 @@ current: done
         per-session vault-access toggle behaves in the real UI. Everything else
         was verified on the targets this session.
 
+## Step 11 — Per-user knowledge vaults (`peer-<user_id>`) and user KBs
+
+- [x] **Step 11** — Every approved Open WebUI user on a node gets a copy of the
+      `peer-node` **knowledge-vault slice** at `/srv/sparknet/knowledge/peer-<user_id>/`,
+      created when the node admin Accepts their signup (role `pending` → `user`),
+      connected to that user's Open WebUI as a knowledge base they own and grow.
+      Design: `../PER_USER_VAULTS_DESIGN.md` (fabric root).
+      - **DoD**: (1) `services/sparknet-vault-provisioner.py` (systemd unit)
+        watches `GET /api/v1/users/` with the node's admin token, triggers on a
+        `pending`→`user` role change, and records provisioning state under
+        `/srv/sparknet/knowledge/.state/`; (2) the materialiser copies only the
+        knowledge-vault slice (numbered categories + shims + `AGENTS.md` +
+        `docs/` + schema; **excluded**: `.state/`, `blockchain/`, `services/`,
+        `scripts/`, `container/`, `configs/`, `tests/`, `manifests/`, `.git/`,
+        template `.env`), generates a fresh `.env` with `VAULT_PATH` → the copy,
+        and `make keys-check` stays clean after provisioning; (3) the KB wiring
+        creates the user's KB with the admin token and grants **read** to that
+        user (`access_grants` flat dicts, `principal_type: user`), embeds the
+        vault markup into the KB, defaults the user's own chat model to it
+        (`meta.knowledge`), and `tests/test_vault_provisioner.py` proves the
+        grant shape and exclusion list on a fixture vault; (4) a re-indexer
+        records a per-copy content digest and re-embeds changed pages; (5) the
+        `master-<id>` copy rule is encoded (elected-Master + admin signed in)
+        and is **inactive on `.131`** — users on the Master node and admins on
+        peer nodes all get `peer-` copies; (6) tests green, `make contract-test`
+        + `lint` green, bundle-verify rc=0.
+      - **Status**: in progress. Design doc `PER_USER_VAULTS_DESIGN.md` written;
+        Open WebUI 0.12.0 API surface confirmed on `.131` (KB create,
+        `knowledge/<id>/file/add`, `access_grants` dict shape, admin-token
+        grants). Deployment on a real signup+Accept cycle is
+        `DoD: confirm: user`.
+
 ## Next
 
 Steps 2–8 are the node's build-out: container, grants, bridge, Open WebUI,

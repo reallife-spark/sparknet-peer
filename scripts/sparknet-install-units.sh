@@ -27,7 +27,7 @@ SYSTEM_UNIT_DIR="${SYSTEM_UNIT_DIR:-/etc/systemd/system}"
 
 # System units that run as root need their shim in the system location.
 # Entries are bare names; the shim is always sparknet-<name>.
-ROOT_UNITS=(wireguard-anchor guard wifi-guard firewall)
+ROOT_UNITS=(wireguard-anchor guard wifi-guard firewall vault-provisioner)
 
 APPLY=0
 for arg in "$@"; do
@@ -68,6 +68,7 @@ shim_body() {
     sync)       printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-sync.sh" ;;
     wireguard-anchor) printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-wireguard-anchor.sh" ;;
     firewall)   printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-firewall.sh" ;;
+    vault-provisioner) printf 'exec %q python3 %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/services/sparknet-vault-provisioner.py" ;;
     *) echo "unknown shim: $1" >&2; exit 1 ;;
   esac
 }
@@ -111,7 +112,7 @@ done
 
 # --- units ------------------------------------------------------------------
 # System units run as root (the guard is root-gated); the sync pair is a user unit.
-SYSTEM_UNITS=(sparknet-wireguard-anchor.service sparknet-guard-daemon.service sparknet-wifi-guard.service)
+SYSTEM_UNITS=(sparknet-wireguard-anchor.service sparknet-guard-daemon.service sparknet-wifi-guard.service sparknet-vault-provisioner.service)
 USER_UNITS=(sparknet-sync.service sparknet-sync.timer)
 
 echo

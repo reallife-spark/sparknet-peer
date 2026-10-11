@@ -149,7 +149,11 @@ def test_open_webui_declares_the_node_agent_surface():
     )
     assert env.get("MODEL_FILTER_ENABLED") == "true"
     assert env.get("MODEL_FILTER_LIST") == "plan,build,vault,node-orchestrator,masterspike"
-    assert env.get("DEFAULT_MODELS") == "plan"
+    assert env.get("DEFAULT_MODELS") == "llama3.2:latest", (
+        "the default chat model is a local Ollama model present on every node, "
+        "so chat keeps answering even if the bridge grant lapses; the node's "
+        "agents stay selectable through the filter"
+    )
     assert webui.get("network_mode") == "host", (
         "host networking is what lets the webui reach the node's own bridge on "
         "loopback; a bridge-network container cannot reach 127.0.0.1:4096"

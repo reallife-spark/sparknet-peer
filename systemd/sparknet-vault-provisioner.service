@@ -1,0 +1,26 @@
+[Unit]
+Description=Sparknet vault provisioner — per-user peer-<user_id> knowledge vaults and WebUI KBs
+Documentation=file:///usr/local/libexec/sparknet/sparknet-vault-provisioner
+# The provisioner reads the node's WebUI users (signin + users list) and writes
+# /srv/sparknet/knowledge, so it wants the AI stack up and the knowledge disk
+# present. The webui container is launched by docker compose, not a unit, so
+# docker.service is the hard ordering point and the provisioner's own RetrySec
+# absorbs the webui startup window.
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# No WorkingDirectory: the generated shim resolves the vault. The WebUI answers
+# on the node's own loopback (host-net stack, PORT 8181), and the admin password
+# lives site-local under the *operator's* home (root's ~ would not find it), so
+# both end points are explicit here rather than left to ~ expansion.
+Environment=SPARKNET_WEBUI=http://127.0.0.1:8181
+Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/.local/state/sparknet/cluster2/webui-admin-password
+ExecStart=/usr/local/libexec/sparknet/sparknet-vault-provisioner
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

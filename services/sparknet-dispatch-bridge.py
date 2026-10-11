@@ -59,7 +59,7 @@ from typing import Any
 STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "DENIED", "ERROR"]
 DEFAULT_PORT = 4096
 DEFAULT_BIND = "127.0.0.1"
-PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/session/", "/vault/")
+PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/")
 SESSION_SCHEMA = "sparknet-session/2"
 SHARE_KINDS = ("kb-view", "kb-share", "session-view", "session-handoff", "full")
 
@@ -878,6 +878,11 @@ class Bridge:
                     for m in _available_models(self.vault_root)
                 ],
             }
+        if method == "GET" and path == "/v1/openapi.json":
+            spec_path = self.vault_root / "manifests" / "vault-openapi.json"
+            if not spec_path.is_file():
+                raise _HttpRequestError(404, "missing-spec", "no manifests/vault-openapi.json in this deployment")
+            return 200, json.loads(spec_path.read_text(encoding="utf-8"))
         if method == "POST" and path == "/v1/chat/completions":
             return 200, self.chat_completions(body, grant)
         if path.startswith("/session/"):

@@ -2,11 +2,11 @@
   "openapi": "3.0.3",
   "info": {
     "title": "sparknet vault tools",
-    "version": "1.1.0",
-    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools. Every operation requires Authorization: Bearer <base64url of a signed session grant>, and the bridge itself is loopback-only; the URL below reaches that loopback from inside the Open WebUI container through extra_hosts host.docker.internal:host-gateway. A tool refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py — the bridge never builds its own ledger shape."
+    "version": "1.2.0",
+    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools (the spec itself is served by the bridge at GET /v1/openapi.json). Every operation requires Authorization: Bearer <base64url of a signed session grant>. The bridge is loopback-only; Open WebUI runs on the host network namespace, so 127.0.0.1:4096 reaches it directly. A tool refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py — the bridge never builds its own ledger shape."
   },
   "servers": [
-    { "url": "http://host.docker.internal:4096", "description": "the node's local dispatch bridge (loopback 4096, reached via host-gateway from the webui container)" }
+    { "url": "http://127.0.0.1:4096", "description": "the node's local dispatch bridge (loopback 4096, host netns shared with the Open WebUI container)" }
   ],
   "security": [{ "BearerAuth": [] }],
   "components": {

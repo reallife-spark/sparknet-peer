@@ -72,7 +72,10 @@ services:
       OPENAI_API_KEYS: "${SPARKNET_WEBUI_BRIDGE_GRANT:?set at deploy time; do not commit a grant}"
       MODEL_FILTER_ENABLED: "true"
       MODEL_FILTER_LIST: "plan,build,vault,node-orchestrator,masterspike"
-      DEFAULT_MODELS: "plan"
+      # The default chat model is a LOCAL Ollama model (present on every node),
+      # not a bridge agent: chat still answers even if the bridge grant lapses,
+      # and the node's agents stay selectable via the filter above.
+      DEFAULT_MODELS: "llama3.2:latest"
       # Knowledge comes from the node's own ChromaDB, but only a STRUCTURE-ONLY
       # corpus is ever ingested (schema, taxonomy, charters, contracts) — never
       # the vault's personal pages (00_System/user.md, 02_Daily, 03_Sources,

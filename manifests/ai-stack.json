@@ -44,7 +44,7 @@
     "contract": "peer-node/manifests/agent-models.json (schema sparknet-agent-models/1)",
     "selectable_models": ["plan", "build", "vault", "node-orchestrator", "masterspike"],
     "declared_not_database_state": "Open WebUI's panel is a database click; the surface lives in agent-models.json + this compose env so a redeploy cannot lose it (peer PLAN Step 5 DoD 5).",
-    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=plan,build,vault,node-orchestrator,masterspike, DEFAULT_MODELS=plan",
+    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=plan,build,vault,node-orchestrator,masterspike, DEFAULT_MODELS=llama3.2:latest (local Ollama so chat answers if the bridge grant lapses)",
     "bridge_route": "OPENAI_API_BASE_URLS=http://127.0.0.1:4096/v1 — this node's dispatch bridge, loopback 4096, reached because Open WebUI shares the host network namespace (network_mode: host).",
     "bridge_key": "OPENAI_API_KEYS expands a deploy-time signed grant ($SPARKNET_WEBUI_BRIDGE_GRANT); no token is committed and the compose fails loudly while it is unset.",
     "approve_deny": "a permission request surfaces as an Approve/Deny card and resolves through POST /session/:id/permissions/:permissionID on the dispatch bridge (peer PLAN Step 5 DoD 2); the decision is recorded in the grant-keyed session.",
