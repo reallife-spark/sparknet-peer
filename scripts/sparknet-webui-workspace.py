@@ -14,9 +14,10 @@ clicking it. Runs against the node's own loopback WebUI (`127.0.0.1:8181`):
     tools-register             register the dispatch bridge as the vault OpenAPI
                                tool server (`/v1/openapi.json`, bearer = the
                                bridge grant token) via POST /configs/tool_servers
-    rebuild-structure          rebuild the `sparknet-structure` KB from
-                               scripts/sparknet-rag-corpus.py (namespaced role
-                               charters — no two files share a basename)
+    rebuild-structure          rebuild the `sparknet-structure` KB as a faithful
+                               mirror of the role vault (numbered 00_System..07
+                               _Archives dirs; symlink shims skipped, so AGENTS.md
+                               ships once, not three times)
     default-model <model>      set the node's default chat model
                                (config `ui.default_models`)
 
@@ -41,7 +42,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.request
@@ -106,7 +106,8 @@ def _session(prov: Any, webui: str, email: str, password_file: Path) -> str:
     return prov.webui_token(webui, email, password)
 
 
-def _http_json(base: str, path: str, method: str, token: str, body: Any = None):
+def _http_json(base: str, path: str, method: str, token: str, body: Any = None,
+               timeout: float = 60):
     req = urllib.request.Request(f"{base}{path}", method=method)
     req.add_header("Accept", "application/json")
     req.add_header("Authorization", f"Bearer {token}")
@@ -115,7 +116,7 @@ def _http_json(base: str, path: str, method: str, token: str, body: Any = None):
         data = json.dumps(body).encode("utf-8")
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, data=data, timeout=60) as resp:
+        with urllib.request.urlopen(req, data=data, timeout=timeout) as resp:
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as e:
@@ -238,7 +239,7 @@ def bridge_connection(grant_token: str, url: str = DEFAULT_BRIDGE_URL,
         "forward_cookies": False,
         "headers": None,
         "key": grant_token.strip(),
-        "config": {},
+        "config": {"enable": True},
         "info": {
             "name": "sparknet vault tools",
             "description": "the node's grant-checked vault tools (vault.list/cat/capture/promote/patch)",
@@ -281,62 +282,146 @@ def cmd_tools_register(webui: str, token: str, grant_file: Path,
 # --- structure KB rebuild ------------------------------------------------------
 
 
+def _find_file_id(webui: str, token: str, path: Path) -> str | None:
+    """Return the global file id for ``path``'s content, if a record exists.
+
+    Open WebUI `file/add` runs the file through the KB's vector collection and
+    rejects any content whose hash is already present under a *different* file
+    id (``has_duplicate_content``). Reusing the existing record by content hash
+    makes a rebuild idempotent: the same page always resolves to the same file
+    id, so re-adds re-index instead of failing with "Duplicate content".
+    """
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    status, resp = _http_json(webui, "/api/v1/files/", "GET", token)
+    if status != 200:
+        return None
+    for item in _collection(resp, "items") or []:
+        if isinstance(item, dict) and item.get("hash") == digest:
+            return item.get("id")
+    return None
+
+
+def _upload_and_embed(webui: str, token: str, path: Path) -> str:
+    """Upload a file and embed it into its per-file collection, deterministically.
+
+    Open WebUI 0.12 uploads with ``process=true`` embed in a background task and
+    return before the per-file chunks exist; a `file/add` fired immediately then
+    fails with EMPTY_CONTENT (a race, so it fails sporadically). Upload without
+    processing, run the synchronous ``/retrieval/process/file``, then return the
+    file id for the caller to add to a KB.
+    """
+    status, resp = _multipart(webui, "/api/v1/files/", token,
+                              [("file", (path.name, path.read_bytes())),
+                               ("process", "false")])
+    if status != 200 or not isinstance(resp, dict) or "id" not in resp:
+        raise Failure(f"file upload failed {path}: HTTP {status}: {resp}")
+    file_id = resp["id"]
+    status, resp = _http_json(webui, "/api/v1/retrieval/process/file", "POST", token,
+                              {"file_id": file_id}, timeout=600)
+    if status != 200:
+        raise Failure(f"file process failed {path}: HTTP {status}: {resp}")
+    return file_id
+
+
+def _add_file_to_kb(webui: str, token: str, kb_id: str, file_id: str,
+                    directory_id: str | None = None) -> None:
+    body: dict[str, Any] = {"file_id": file_id}
+    if directory_id:
+        body["directory_id"] = directory_id
+    status, resp = _http_json(webui, f"/api/v1/knowledge/{kb_id}/file/add",
+                              "POST", token, body, timeout=600)
+    if status != 200:
+        raise Failure(f"kb add failed: HTTP {status}: {resp}")
+
+
 def cmd_rebuild_structure(webui: str, token: str, vault_root: Path,
                           kb_name: str) -> int:
-    from tempfile import TemporaryDirectory
+    """Recreate the structure KB as a faithful mirror of the role vault.
 
-    corpus_module = _load_corpus(vault_root)
-    with TemporaryDirectory(prefix="sparknet-corpus-") as tmp:
-        out = Path(tmp)
-        written = corpus_module.build_corpus(vault_root, out)
-        if not written:
-            raise Failure(f"structure corpus is empty under {vault_root}")
-        names = [p.name for p in written]
-        if len(names) != len(set(names)):
-            raise Failure(f"corpus still has duplicate basenames: {names}")
+    The per-user KB mirrors the node's numbered vault (00_System..07_Archives):
+    every real page is uploaded, embedded, added and filed into its matching
+    numbered directory in one pass (directory_id is set at add time, no second
+    move stage). Symlink shims (index.md, log.md, category links) are skipped by
+    the provisioner's page walk, so the root AGENTS.md appears exactly once and
+    Open WebUI's flat file list stays free of charter dupes.
 
-        existing = _knowledge_by_name(webui, token, kb_name)
-        if existing is not None:
-            status, resp = _http_json(webui, f"/api/v1/knowledge/{existing}", "DELETE", token)
-            if status != 200:
-                raise Failure(f"old {kb_name} delete failed: HTTP {status}: {resp}")
-            log(f"deleted old {kb_name} ({existing})")
+    Re-runs are idempotent: pages whose content already has a global file record
+    are re-attached under that record's id (never re-uploaded), which bypasses
+    Open WebUI's `has_duplicate_content` guard and restores any dropped
+    membership instead of failing with a 400.
+    """
+    prov = _load_provisioner()
 
-        status, resp = _http_json(webui, "/api/v1/knowledge/create", "POST", token, {
-            "name": kb_name,
-            "description": "structure-only fabric corpus (contracts + charters); role charters are namespaced",
-            "access_grants": [],
-        })
-        if status != 200 or not isinstance(resp, dict) or "id" not in resp:
-            raise Failure(f"knowledge create failed: HTTP {status}: {resp}")
-        kb_id = resp["id"]
+    existing = _knowledge_by_name(webui, token, kb_name)
+    if existing is not None:
+        _delete_knowledge(webui, token, existing)
+        log(f"deleted old {kb_name} ({existing})")
 
-        added = 0
-        for rel in written:
-            path = out / rel
-            status, resp = _multipart(webui, "/api/v1/files/", token,
-                                      [("file", (path.name, path.read_bytes())),
-                                       ("process", "true")])
-            if status != 200 or not isinstance(resp, dict) or "id" not in resp:
-                raise Failure(f"file upload failed {rel}: HTTP {status}: {resp}")
-            file_id = resp["id"]
-            status, resp = _http_json(webui, f"/api/v1/knowledge/{kb_id}/file/add",
-                                      "POST", token, {"file_id": file_id})
-            if status != 200:
-                raise Failure(f"kb add failed {rel}: HTTP {status}: {resp}")
-            added += 1
-        log(f"{kb_name}: rebuilt with {added} files (kb {kb_id})")
+    status, resp = _http_json(webui, "/api/v1/knowledge/create", "POST", token, {
+        "name": kb_name,
+        "description": "mirror of the node's role vault (numbered layout); role charters are namespaced",
+        "access_grants": [],
+    })
+    if status != 200 or not isinstance(resp, dict) or "id" not in resp:
+        raise Failure(f"knowledge create failed: HTTP {status}: {resp}")
+    kb_id = resp["id"]
+
+    dirs = prov.ensure_directories(webui, token, kb_id, prov.NUMBERED_TOP)
+
+    added = 0
+    moved = 0
+    reused = 0
+    for page in prov._vault_pages(vault_root):
+        rel = page.relative_to(vault_root)
+        existing = _find_file_id(webui, token, page)
+        if existing:
+            file_id = existing
+            reused += 1
+        else:
+            file_id = _upload_and_embed(webui, token, page)
+        top = prov._top_dir(rel)
+        directory_id = dirs.get(top) if top else None
+        _add_file_to_kb(webui, token, kb_id, file_id, directory_id)
+        added += 1
+        if directory_id:
+            moved += 1
+
+    log(f"{kb_name}: rebuilt with {added} files ({reused} reused by content "
+        f"hash), {moved} filed into {len(dirs)} numbered directories "
+        f"(kb {kb_id})")
     return 0
+
+
+def _collection(body: Any, key: str) -> list | None:
+    """Open WebUI 0.12 paginates the admin list endpoints: ``/users/`` returns
+    ``{"users": [...], "total": N}``, ``/knowledge/`` returns ``{"items": [...]}``.
+    Older minor versions returned a bare list. Normalise both.
+    """
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        rows = body.get(key)
+        if isinstance(rows, list):
+            return rows
+    return None
 
 
 def _knowledge_by_name(webui: str, token: str, name: str) -> str | None:
     status, resp = _http_json(webui, "/api/v1/knowledge/", "GET", token)
-    if status != 200 or not isinstance(resp, list):
+    items = _collection(resp, "items")
+    if status != 200 or items is None:
         raise Failure(f"knowledge list failed: HTTP {status}")
-    for item in resp:
+    for item in items:
         if isinstance(item, dict) and item.get("name") == name and item.get("id"):
             return item["id"]
     return None
+
+
+def _delete_knowledge(webui: str, token: str, kb_id: str) -> None:
+    """Open WebUI 0.12 deletes a KB at ``{id}/delete``; 0.11 used plain ``{id}``."""
+    status, resp = _http_json(webui, f"/api/v1/knowledge/{kb_id}/delete", "DELETE", token)
+    if status != 200:
+        raise Failure(f"knowledge delete failed: HTTP {status}: {resp}")
 
 
 def _load_corpus(vault_root: Path) -> Any:
@@ -356,8 +441,16 @@ def _load_corpus(vault_root: Path) -> Any:
 
 
 def cmd_default_model(webui: str, token: str, model: str) -> int:
-    status, resp = _http_json(webui, "/api/v1/configs/models", "POST", token,
-                              {"DEFAULT_MODELS": model})
+    status, cur = _http_json(webui, "/api/v1/configs/models", "GET", token)
+    if status != 200 or not isinstance(cur, dict):
+        raise Failure(f"models config read failed: HTTP {status}: {cur}")
+    pinned = cur.get("DEFAULT_PINNED_MODELS") or ""
+    order = cur.get("MODEL_ORDER_LIST") or []
+    status, resp = _http_json(webui, "/api/v1/configs/models", "POST", token, {
+        "DEFAULT_MODELS": model,
+        "DEFAULT_PINNED_MODELS": pinned,
+        "MODEL_ORDER_LIST": order,
+    })
     if status != 200:
         raise Failure(f"default model update failed: HTTP {status}: {resp}")
     log(f"default chat model set to {model}")
@@ -368,11 +461,13 @@ def cmd_default_model(webui: str, token: str, model: str) -> int:
 
 
 def cmd_status(webui: str, token: str) -> int:
-    status, users = _http_json(webui, "/api/v1/users/", "GET", token)
-    if status != 200 or not isinstance(users, list):
+    status, users_raw = _http_json(webui, "/api/v1/users/", "GET", token)
+    users = _collection(users_raw, "users")
+    if status != 200 or users is None:
         raise Failure(f"users list failed: HTTP {status}")
-    status, kbs = _http_json(webui, "/api/v1/knowledge/", "GET", token)
-    if status != 200 or not isinstance(kbs, list):
+    status, kbs_raw = _http_json(webui, "/api/v1/knowledge/", "GET", token)
+    kbs = _collection(kbs_raw, "items")
+    if status != 200 or kbs is None:
         raise Failure(f"knowledge list failed: HTTP {status}")
     status, skills = _http_json(webui, "/api/v1/skills/", "GET", token)
     skills = skills if status == 200 and isinstance(skills, list) else []
@@ -417,9 +512,9 @@ def _parser() -> argparse.ArgumentParser:
     tools.add_argument("--url", default=os.environ.get("SPARKNET_BRIDGE_URL") or DEFAULT_BRIDGE_URL)
     tools.add_argument("--spec-path", default=DEFAULT_SPEC_PATH)
 
-    rs = sub.add_parser("rebuild-structure", help="rebuild the structure-only KB from the corpus")
+    rs = sub.add_parser("rebuild-structure", help="rebuild the KB as a mirror of the role vault")
     rs.add_argument("--vault-root", type=Path,
-                    default=Path("~").expanduser() / "sparknet-cluster2")
+                    default=Path("~").expanduser() / "sparknet-cluster2" / "peer-node")
     rs.add_argument("--kb-name", default=DEFAULT_KB_NAME)
 
     dm = sub.add_parser("default-model", help="set the default chat model")

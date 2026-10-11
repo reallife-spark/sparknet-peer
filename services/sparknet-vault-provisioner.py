@@ -163,8 +163,15 @@ def _http_json(url: str, method: str, token: str | None, body: Any = None) -> tu
         return e.code, detail
 
 
-def _upload_file(url: str, token: str, path: Path) -> str:
-    """POST /api/v1/files/ as multipart; returns the file id."""
+def _upload_and_embed(url: str, token: str, path: Path) -> str:
+    """Upload a file and embed it into its per-file collection, deterministically.
+
+    Uploading with ``process=true`` embeds in a background task and returns
+    before the per-file chunks exist; a `file/add` fired immediately then fails
+    with EMPTY_CONTENT (a race, so it fails sporadically). Upload without
+    processing, run the synchronous ``/retrieval/process/file``, then return
+    the file id for the caller to attach to a KB.
+    """
     boundary = "sparknet-" + hashlib.sha256(os.urandom(16)).hexdigest()
     name = path.name
     content = path.read_bytes()
@@ -176,7 +183,7 @@ def _upload_file(url: str, token: str, path: Path) -> str:
     parts.append(content)
     parts.append(b"\r\n")
     parts.append(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"process\"\r\n\r\ntrue\r\n".encode()
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"process\"\r\n\r\nfalse\r\n".encode()
     )
     parts.append(f"--{boundary}--\r\n".encode())
     data = b"".join(parts)
@@ -186,7 +193,13 @@ def _upload_file(url: str, token: str, path: Path) -> str:
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     with urllib.request.urlopen(req, timeout=60) as resp:
         result = json.loads(resp.read())
-    return result["id"]
+    file_id = result["id"]
+
+    status, body = _http_json(f"{url}/api/v1/retrieval/process/file", "POST", token,
+                              {"file_id": file_id})
+    if status != 200:
+        raise Refusal(f"file process failed ({name}): HTTP {status}: {body}")
+    return file_id
 
 
 def _state_dir(knowledge_root: Path) -> Path:
@@ -352,11 +365,26 @@ def webui_token(base: str, email: str, password: str) -> str:
     return body["token"]
 
 
+def _collection(body: Any, key: str) -> list | None:
+    """Open WebUI 0.12 paginates the admin list endpoints: ``/users/`` returns
+    ``{"users": [...], "total": N}``, ``/knowledge/`` returns ``{"items": [...]}``.
+    Older minor versions returned a bare list. Normalise both.
+    """
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        rows = body.get(key)
+        if isinstance(rows, list):
+            return rows
+    return None
+
+
 def fetch_users(base: str, token: str) -> list[dict]:
     status, body = _http_json(f"{base}/api/v1/users/", "GET", token)
-    if status != 200 or not isinstance(body, list):
+    users = _collection(body, "users")
+    if status != 200 or users is None:
         raise Refusal(f"users list failed: HTTP {status}")
-    return body
+    return users
 
 
 def create_kb(base: str, token: str, name: str, user_id: str) -> str:
@@ -382,7 +410,7 @@ def embed_vault_into_kb(base: str, token: str, kb_id: str, vault: Path,
     for page in _vault_pages(vault):
         rel = page.relative_to(vault)
         try:
-            file_id = _upload_file(f"{base}", token, page)
+            file_id = _upload_and_embed(f"{base}", token, page)
         except Exception as e:
             if progress:
                 progress(f"upload failed {rel}: {e}")

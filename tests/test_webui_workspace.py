@@ -9,13 +9,16 @@ without a live WebUI:
 * the skills ZIP builder wraps each skill directory that carries a SKILL.md,
   and emits one `create` decision per package;
 * the bridge tool-server connection matches the Open WebUI 0.12.0
-  `ToolServerConnection` shape (url/path/type/auth_type/key);
-* the corpus rebuild uses the namespaced rag-corpus builder, so no two files
-  share a basename (Open WebUI flattens filenames).
+  `ToolServerConnection` shape (url/path/type/auth_type/key), including the
+  `config.enable` flag without which `get_tool_servers` hides the server;
+* the structure-KB rebuild is idempotent against 0.12's
+  `has_duplicate_content` guard: pages reuse their global file record by
+  content hash and file into their numbered directory at add time.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import subprocess
 import sys
@@ -92,10 +95,14 @@ def test_bridge_connection_matches_the_webui_tool_server_shape() -> None:
     assert conn["key"] == "abc.def"
     for required in ("url", "path", "type", "auth_type", "forward_cookies", "headers", "key", "config"):
         assert required in conn
+    assert conn["config"].get("enable") is True, (
+        "a connection without config.enable is never surfaced by get_tool_servers"
+    )
 
 
-def test_corpus_rebuild_uses_namespaced_names(tmp_path: Path) -> None:
-    """The rebuild relies on the committed, namespaced rag-corpus builder."""
+def test_corpus_builder_namespaces_role_charters(tmp_path: Path) -> None:
+    """The rag-corpus builder (RAG ingest, not the KB rebuild) still has to
+    namespace role charters so its own duplicate-basename rule holds."""
     corpus = ws._load_corpus(Path(__file__).resolve().parent.parent.parent)
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -115,7 +122,7 @@ def test_corpus_rebuild_uses_namespaced_names(tmp_path: Path) -> None:
 
 
 def test_knowledge_by_name_returns_matching_id() -> None:
-    def _http_json_patched(base, path, method, token, body=None):
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
         assert method == "GET" and path == "/api/v1/knowledge/"
         return 200, [{"id": "kb-1", "name": "sparknet-structure"}, {"id": "kb-2", "name": "other"}]
 
@@ -126,3 +133,133 @@ def test_knowledge_by_name_returns_matching_id() -> None:
         assert ws._knowledge_by_name("http://x", "tok", "nope") is None
     finally:
         ws._http_json = original
+
+
+def test_knowledge_by_name_accepts_the_open_webui_012_envelope() -> None:
+    """0.12 paginates /knowledge/ as {"items": [...]}; earlier minors a list."""
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        assert method == "GET" and path == "/api/v1/knowledge/"
+        return 200, {"items": [{"id": "kb-1", "name": "sparknet-structure"}], "total": 1}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        assert ws._knowledge_by_name("http://x", "tok", "sparknet-structure") == "kb-1"
+    finally:
+        ws._http_json = original
+
+
+def test_knowledge_delete_uses_the_012_id_delete_route() -> None:
+    """0.12 deletes a KB at {id}/delete; the bare {id} DELETE returns 405."""
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        assert method == "DELETE" and path == "/api/v1/knowledge/kb-1/delete"
+        return 200, {"id": "kb-1"}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        ws._delete_knowledge("http://x", "tok", "kb-1")
+    finally:
+        ws._http_json = original
+
+
+def test_add_file_to_kb_passes_directory_id_when_given() -> None:
+    """0.12 files go straight into their numbered directory at add time."""
+    seen: dict = {}
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        seen["body"] = body
+        return 200, {"done": True}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        ws._add_file_to_kb("http://x", "tok", "kb-1", "f-1",
+                           directory_id="dir-7")
+    finally:
+        ws._http_json = original
+    assert seen["body"] == {"file_id": "f-1", "directory_id": "dir-7"}
+
+
+def test_add_file_to_kb_without_directory_id_omits_the_key() -> None:
+    seen: dict = {}
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        seen["body"] = body
+        return 200, {"done": True}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        ws._add_file_to_kb("http://x", "tok", "kb-1", "f-1")
+    finally:
+        ws._http_json = original
+    assert seen["body"] == {"file_id": "f-1"}
+
+
+def test_find_file_id_reuses_a_global_record_by_content_hash(tmp_path: Path) -> None:
+    """Re-adding identical content must reuse the recorded file id, or 0.12's
+    has_duplicate_content guard fails the add with a 400."""
+    page = tmp_path / "p.md"
+    page.write_text("hello vault")
+    summary = hashlib.sha256(b"hello vault").hexdigest()
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        assert (path, method) == ("/api/v1/files/", "GET")
+        return 200, {"items": [
+            {"id": "f-old", "hash": summary},
+        ], "total": 1}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        found = ws._find_file_id("http://x", "tok", page)
+    finally:
+        ws._http_json = original
+    assert found == "f-old"
+
+
+def test_find_file_id_returns_none_when_content_is_new(tmp_path: Path) -> None:
+    page = tmp_path / "p.md"
+    page.write_text("fresh content")
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        return 200, {"items": [], "total": 0}
+
+    original = ws._http_json
+    ws._http_json = _http_json_patched
+    try:
+        found = ws._find_file_id("http://x", "tok", page)
+    finally:
+        ws._http_json = original
+    assert found is None
+
+
+def test_upload_and_embed_runs_process_even_with_a_background_embed(tmp_path: Path) -> None:
+    """0.12 uploads with process=true embed asynchronously; we do upload +
+    synchronous /retrieval/process/file so a follow-up add never races
+    EMPTY_CONTENT."""
+    calls: list[tuple] = []
+    page = tmp_path / "p.md"
+    page.write_text("body")
+
+    def _multipart_patched(base, path, token, fields):
+        calls.append(("multipart", path, [n for n, _ in fields]))
+        return 200, {"id": "f-1"}
+
+    def _http_json_patched(base, path, method, token, body=None, timeout=None):
+        calls.append((method, path, body))
+        return 200, {"done": True}
+
+    a, b = ws._multipart, ws._http_json
+    ws._multipart, ws._http_json = _multipart_patched, _http_json_patched
+    try:
+        fid = ws._upload_and_embed("http://x", "tok", page)
+    finally:
+        ws._multipart, ws._http_json = a, b
+    assert fid == "f-1"
+    assert ("multipart", "/api/v1/files/", ["file", "process"]) in calls
+    assert ("POST", "/api/v1/retrieval/process/file", {"file_id": "f-1"}) in calls
+    assert any(method == "GET" for method, *_ in calls) is False

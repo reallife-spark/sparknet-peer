@@ -204,3 +204,35 @@ def test_state_roundtrip(tmp_path: Path) -> None:
     assert mod._load_state(root) == {"u1": {"stage": "done"}}
     import os
     assert os.stat(root / ".state" / "provisioned.json").st_mode & 0o077 == 0
+
+
+def test_fetch_users_accepts_the_open_webui_012_envelope() -> None:
+    """0.12 paginates /users/ as {"users": [...], "total": N}; earlier minors a list."""
+    mod = import_source()
+
+    def _http_json(url, method, token, body=None):
+        if method == "GET" and url == "http://x/api/v1/users/":
+            return 200, {"users": [{"id": "u1", "role": "admin"}], "total": 1}
+        raise AssertionError(f"unexpected call {method} {url}")
+
+    orig = mod._http_json
+    mod._http_json = _http_json
+    try:
+        users = mod.fetch_users("http://x", "tok")
+    finally:
+        mod._http_json = orig
+    assert users == [{"id": "u1", "role": "admin"}]
+
+
+def test_fetch_users_still_accepts_a_bare_list() -> None:
+    mod = import_source()
+
+    def _http_json(url, method, token, body=None):
+        return 200, [{"id": "u1"}]
+
+    orig = mod._http_json
+    mod._http_json = _http_json
+    try:
+        assert mod.fetch_users("http://x", "tok") == [{"id": "u1"}]
+    finally:
+        mod._http_json = orig
