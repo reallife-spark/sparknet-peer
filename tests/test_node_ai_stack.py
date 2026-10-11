@@ -1,20 +1,22 @@
 """The node's own AI stack — declared, and coherent as declared.
 
 CLUSTER_INFERENCE_DESIGN.md adoption item 3 (peer-side): every node runs its own
-model server and its own Open WebUI, and a node's own prompts never leave its
-containers. The part that matters here is the boundary, not the existence of a
-compose file: nothing in the stack may be reachable from the overlay or from a
-neighbouring node, and nothing in it may carry a signing or cluster capability.
-The `sign` capability is the one the peer roles deliberately withhold; a key or
-a signer socket mounted here would be the same failure the admin surface
+chat surface on its own model server and its own vector store, and a node's own
+prompts never leave its containers. The part that matters here is the boundary,
+not the existence of a compose file: nothing in the stack may carry a signing or
+cluster capability, and its one published port is paired with a host firewall
+rule. The `sign` capability is the one the peer roles deliberately withhold; a key
+or a signer socket mounted here would be the same failure the admin surface
 (`master-node/tests/test_admin_surface.py`) guards against, in the
 confidentiality direction.
 
-These tests read the manifest and the compose file — they prove the *declared*
-topology is coherent, exactly as the admin surface's do, and no stronger. The
-deployed healthcheck (pull the images on a target node, run the stack, confirm
-both surfaces answer with no GPU present) is `DoD: confirm: user` and is
-recorded rather than claimed.
+Operator decision (2026-10-10): the chat surface is published on `0.0.0.0:8181`
+for LAN + overlay reachability, and a `SPARKNET-FW` host firewall keeps those
+ports off the public internet. These tests read the manifest and the compose file
+— they prove the *declared* topology is coherent, exactly as the admin surface's
+do, and no stronger. The deployed healthcheck (pull the image on a target node,
+run the stack, confirm the surface answers, create the MASTERSPIKE model, verify
+the firewall) is `DoD: confirm: user` and is recorded rather than claimed.
 """
 
 from __future__ import annotations
@@ -57,14 +59,14 @@ def _compose_services() -> dict[str, dict]:
     return yaml.safe_load(COMPOSE.read_text())["services"]
 
 
-# --- the topology is the two own-inference services, and nothing more ----------
+# --- the topology is the one own-inference surface, and nothing more ----------
 
 
-def test_the_stack_declares_a_nodes_own_inference_services_only():
+def test_the_stack_declares_the_nodes_own_chat_surface_only():
     services = _compose_services()
-    assert set(services) == {"ollama", "open-webui"}, (
-        "the AI stack is exactly the node's model server and its own chat surface; "
-        f"anything else got {sorted(services)}"
+    assert set(services) == {"open-webui"}, (
+        "the AI stack is the node's own chat surface standing on the node's infra "
+        f"model server and vector store; anything else got {sorted(services)}"
     )
 
 
@@ -76,21 +78,26 @@ def test_the_manifest_and_compose_agree_on_the_service_set():
     )
 
 
-# --- every port binds to loopback, never the overlay or all interfaces ---------
+# --- the one published port is the firewalled chat surface --------------------
 
 
-def test_every_port_binds_to_loopback_only():
-    for name, service in _compose_services().items():
-        ports = service.get("ports", [])
-        assert ports, f"{name} declares no ports; the stack is unreachable as specified"
-        for entry in ports:
-            assert entry.startswith("127.0.0.1:"), (
-                f"{name} binds {entry!r}; only loopback is allowed. A bare ':port' "
-                "binds every interface and an overlay address exposes the node's "
-                "knowledge to the cluster, both of which invert this design."
-            )
-            assert "0.0.0.0" not in entry
-            assert "10.100.0." not in entry
+def test_the_only_published_port_is_the_firewalled_webui():
+    webui = _compose_services()["open-webui"]
+    assert webui.get("network_mode") == "host", (
+        "Open WebUI must share the host netns so it can reach the node's "
+        "loopback-only dispatch bridge (127.0.0.1:4096); a bridge-network "
+        "container cannot reach a loopback-only host listener"
+    )
+    assert webui.get("ports") is None, (
+        "with network_mode: host the surface binds through PORT, not a ports map"
+    )
+    assert webui.get("environment", {}).get("PORT") == "8181", (
+        "the operator decision is a single LAN + overlay port 8181, paired with "
+        "the SPARKNET-FW host firewall"
+    )
+    lookup = _load(MANIFEST)["topology"]
+    assert lookup["published_ports"] == ["0.0.0.0:8181 (host netns)"]
+    assert "SPARKNET-FW" in json.dumps(lookup) or "firewall" in json.dumps(_load(MANIFEST)["network_boundary"])
 
 
 def test_the_stack_opens_no_overlay_or_admin_port():
@@ -103,25 +110,31 @@ def test_the_stack_opens_no_overlay_or_admin_port():
     assert "4210" not in ports, "4210 is the election exchange port; a node must not claim it"
 
 
-# --- Open WebUI answers with THIS node's own model, and knowledge only from vault
+# --- Open WebUI answers with THIS node's own model, knowledge from the node ---
 
 
 def test_open_webui_uses_this_nodes_own_ollama():
     webui = _compose_services()["open-webui"]
     base = webui.get("environment", {}).get("OLLAMA_BASE_URL")
-    assert base == "http://ollama:11434", (
-        f"Open WebUI points at {base!r}; it must point at the compose service "
-        "'ollama:11434', this node's own model server. An overlay or remote URL "
-        "means the node stopped being a node and became a thin client."
+    assert base == "http://127.0.0.1:11434", (
+        f"Open WebUI points at {base!r}; it must point at this node's own infra "
+        "Ollama on the host loopback (network_mode: host). An overlay or remote "
+        "URL means the node stopped being a node and became a thin client."
     )
 
 
-def test_open_webui_rag_is_disabled():
+def test_open_webui_rag_is_chroma_backed_and_structure_scoped():
     webui = _compose_services()["open-webui"]
-    assert webui.get("environment", {}).get("RAG_INGESTION_ENABLED") == "false", (
-        "Open WebUI's own vector store would be a second, grant-less knowledge "
-        "base; the vault is the only one (same rule as the Master admin surface)"
+    env = webui.get("environment", {})
+    assert env.get("RAG_INGESTION_ENABLED") == "true", (
+        "the operator enabled Open WebUI RAG (2026-10-10), backed by the node's own ChromaDB"
     )
+    assert env.get("VECTOR_DB") == "chroma"
+    assert env.get("CHROMA_HTTP_HOST") == "127.0.0.1"
+    assert env.get("CHROMA_HTTP_PORT") == "18000"
+    manifest = _load(MANIFEST)["knowledge_bases"]["open_webui_rag"]
+    assert manifest["corpus"].startswith("structure-only"), manifest["corpus"]
+    assert "00_System/user.md" in manifest["excluded"], "personal pages must be excluded from the corpus"
 
 
 # --- Step 5: the node's agents as the Open WebUI surface ----------------------
@@ -130,16 +143,17 @@ def test_open_webui_rag_is_disabled():
 def test_open_webui_declares_the_node_agent_surface():
     webui = _compose_services()["open-webui"]
     env = webui.get("environment", {})
-    assert env.get("OPENAI_API_BASE_URLS") == "http://host.docker.internal:4096/v1", (
+    assert env.get("OPENAI_API_BASE_URLS") == "http://127.0.0.1:4096/v1", (
         "the Step 5 surface is the node's own dispatch bridge (loopback 4096); "
         "any other base URL routes the node's agents through something foreign"
     )
     assert env.get("MODEL_FILTER_ENABLED") == "true"
     assert env.get("MODEL_FILTER_LIST") == "plan,build,vault,node-orchestrator,masterspike"
     assert env.get("DEFAULT_MODELS") == "plan"
-    assert isinstance(webui.get("extra_hosts"), list) and any(
-        line.startswith("host.docker.internal:host-gateway") for line in webui["extra_hosts"]
-    ), "host.docker.internal must resolve to this host so the webui can reach the node's own bridge"
+    assert webui.get("network_mode") == "host", (
+        "host networking is what lets the webui reach the node's own bridge on "
+        "loopback; a bridge-network container cannot reach 127.0.0.1:4096"
+    )
 
 
 def test_the_bridge_key_is_a_deploy_time_variable_never_a_committed_token():
@@ -148,6 +162,16 @@ def test_the_bridge_key_is_a_deploy_time_variable_never_a_committed_token():
     assert key.startswith("${SPARKNET_WEBUI_BRIDGE_GRANT:"), key
     assert "do not commit" in key
     assert "sk-" not in key, "a standing bearer token must never be committed"
+
+
+def test_the_first_admin_is_a_deploy_time_variable_never_a_committed_secret():
+    webui = _compose_services()["open-webui"]
+    env = webui["environment"]
+    assert env.get("ENABLE_SIGNUP") == "false", "a chat surface must never be self-service"
+    assert "${SPARKNET_WEBUI_ADMIN_PASSWORD" in env.get("WEBUI_ADMIN_PASSWORD", ""), (
+        "the first admin password must be a deploy-time variable, never a committed value"
+    )
+    assert "${SPARKNET_WEBUI_ADMIN_EMAIL" in env.get("WEBUI_ADMIN_EMAIL", "")
 
 
 def test_the_step5_models_are_declared_in_agent_models_json():
@@ -200,10 +224,10 @@ def test_the_manifest_grants_no_authority_capability():
 
 
 def test_no_named_volume_is_made_of_the_nodes_state():
-    """Model weights are server state and belong in a named volume; the node's
-    vault `.state` (keys, authz) is the one thing that must never get here."""
+    """Chat/session state belongs in a named volume; the node's vault `.state`
+    (keys, authz) is the one thing that must never get here."""
     volumes = yaml.safe_load(COMPOSE.read_text()).get("volumes", {})
-    assert list(volumes) == ["ollama-models"], f"unexpected stack volumes: {list(volumes)}"
+    assert list(volumes) == ["open-webui-data"], f"unexpected stack volumes: {list(volumes)}"
     assert ".state" not in volumes, "the node vault's .state must not be a stack volume"
 
 

@@ -27,7 +27,7 @@ SYSTEM_UNIT_DIR="${SYSTEM_UNIT_DIR:-/etc/systemd/system}"
 
 # System units that run as root need their shim in the system location.
 # Entries are bare names; the shim is always sparknet-<name>.
-ROOT_UNITS=(wireguard-anchor guard wifi-guard)
+ROOT_UNITS=(wireguard-anchor guard wifi-guard firewall)
 
 APPLY=0
 for arg in "$@"; do
@@ -67,6 +67,7 @@ shim_body() {
     wifi-guard) printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-wlan-guard.sh" ;;
     sync)       printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-sync.sh" ;;
     wireguard-anchor) printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-wireguard-anchor.sh" ;;
+    firewall)   printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-firewall.sh" ;;
     *) echo "unknown shim: $1" >&2; exit 1 ;;
   esac
 }

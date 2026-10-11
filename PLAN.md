@@ -1,6 +1,6 @@
 ---
 title: sparknet peer-node Plan
-updated: 2026-10-10
+updated: 2026-10-11
 current: done
 ---
 
@@ -230,10 +230,15 @@ current: done
         card can render and resolve it; refusals are stable (404 `no-session` /
         `unknown-permission`, 409 `already-resolved`, 400 `malformed`).
         **DoD 3** — unchanged from Step 4 (vault tools stay grant-checked;
-        `test_bridge.py` still proves it). **DoD 4** — `RAG_INGESTION_ENABLED:
-        "false"` remains, and the new surface env adds `MODEL_FILTER_ENABLED`,
-        `MODEL_FILTER_LIST: plan,build,vault,node-orchestrator`, `DEFAULT_MODELS:
-        plan`. **DoD 5** — the whole surface is committed config: the model
+        `test_bridge.py` still proves it); a per-session `POST
+        /session/<id>/vault-access` toggle lets one grant work repeatedly in that
+        session (mode `all`), or restores the one-shot default (`per-tool`),
+        without changing scope, expiry, signature or the per-mutation audit.
+        **DoD 4** — RAG is **enabled** on a **structure-only** corpus
+        (`scripts/sparknet-rag-corpus.py`; `RAG_INGESTION_ENABLED: "true"`,
+        `VECTOR_DB: chroma`, the node's own ChromaDB), never the personal pages;
+        the surface env adds `MODEL_FILTER_ENABLED`, `MODEL_FILTER_LIST:
+        plan,build,vault,node-orchestrator,masterspike`, `DEFAULT_MODELS: plan`. **DoD 5** — the whole surface is committed config: the model
         manifest, the ai-stack compose's bridge connection
         (`OPENAI_API_BASE_URLS: http://host.docker.internal:4096/v1` via
         `extra_hosts: host.docker.internal:host-gateway`) with a **deploy-time
@@ -461,7 +466,68 @@ current: done
         were auto-verified.
       - **Note**: `open-webui` on `:8080` loopback-only; 8080 is the Master's
         admin port on the Master, but here it is a node-local socket never
-        exposed to the overlay.
+        exposed to the overlay. **Superseded by Step 10** (operator decision
+        2026-10-10): the port, the Ollama wiring and the RAG posture were revised;
+        the no-authority / no-key / sign-withheld boundaries Step 9 set are
+        unchanged.
+
+## Step 10 — Node AI stack revision (operator decision: exposed + firewalled, structure-only RAG, session toggle)
+
+- [x] **Step 10** — Revise the node's committed AI stack for the operator's
+      2026-10-10 decisions, without weakening the boundaries Step 9 set.
+      - **DoD**: (1) `configs/ai-stack/docker-compose.yml` declares the single
+        `open-webui` surface on `0.0.0.0:8181` (LAN + overlay, `PORT=8181`
+        on the **host network** — the operator chose `network_mode: host` on
+        2026-10-11 so the surface can reach the loopback-only dispatch bridge,
+        which a bridge-network container cannot), standing on the node's infra
+        Ollama (`http://127.0.0.1:11434`) and infra ChromaDB
+        (`http://127.0.0.1:18000`), with a deploy-time grant
+        (`${SPARKNET_WEBUI_BRIDGE_GRANT:?…}`) and the Step 5 model surface;
+        (2) RAG is **enabled** but scoped to a **structure-only** corpus built
+        by `scripts/sparknet-rag-corpus.py`, and `tests/test_rag_corpus.py`
+        proves no excluded path (user.md, 02_Daily, .state, keys) can reach it;
+        (3) the bridge gains `POST /session/<id>/vault-access` (`all`|`per-tool`)
+        so one grant works repeatedly in a session, defaulting to one-shot, and
+        `test_bridge.py` proves all four cases; (4) `manifests/ai-stack.json` +
+        `manifests/vault-openapi.json` declare the revised wiring (published +
+        firewalled, host-net bridge URL, the toggle path) and
+        `tests/test_node_ai_stack.py` asserts them read off the files; (5) the
+        `SPARKNET-FW` firewall (v4 `INPUT`+`DOCKER-USER`, v6 `INPUT`, systemd
+        unit ordered after docker) ships as `scripts/sparknet-firewall.sh` +
+        `systemd/sparknet-firewall.service`, `tests/test_firewall.py` holds the
+        ports/rules in sync, and the exposure tradeoff is written in
+        `CLUSTER_INFERENCE_DESIGN.md`.
+      - **Status**: complete, deployed live on **both nodes 2026-10-11**.
+        Committed config, manifests, bridge toggle, corpus builder + tests and
+        the design-doc record were applied in the previous session; this session
+        deployed them: (a) **Python 3.8 fix** — the bridge and shared runtime
+        gained `from __future__ import annotations` + a `collections.abc`
+        fallback for `Callable`, because the nodes run Ubuntu 20.04's Python
+        3.8.10 and the modules used PEP 585/604 (bundle-only modules already
+        had the future import; `sparknet-dispatch-bridge.py`,
+        `sparknet-liveness.py`, `sparknet-election.py` did not);
+        (b) **grants** — `webui-node131-20261011` and `webui-node133-20261011`
+        minted on `.131` with the cluster2 operational key into the deployed
+        registry, verified incl. a failing presenter check; bearer tokens stored
+        0600 in each node's `$STATE/webui-bridge-grant.token`;
+        (c) **Open WebUI** on both nodes (`0.0.0.0:8181`, host net) with the 9
+        declared agent models reachable and 26 local Ollama models; first admin
+        `admin@sparknet.local` created headlessly from deploy-time
+        `SPARKNET_WEBUI_ADMIN_*` (passwords stored 0600 in
+        `$STATE/webui-admin-password`); (d) **RAG** — the structure-only corpus
+        (17 files) ingested into the `sparknet-structure` knowledge base and
+        embedded into each node's ChromaDB on top of what the committed config
+        declares; (e) **firewall** installed + enabled both nodes (loopback/LAN/
+        overlay/docker/link-local allowed; global-v6 → 8181 dropped), proven to
+        re-apply after a docker restart via `PartOf=docker.service`; (f)
+        **MASTERSPIKE** built via `ollama create sparknet-masterspike` on both
+        nodes (2.0 GB; answers in the llm-wiki voice). End-to-end verified: WebUI
+        → Ollama chat, WebUI → bridge agent route (records sessions), overlay
+        `.133→.131:8181` 200, LAN/SSH intact, firewall drop on public v6.
+      - **DoD: confirm: user** for the parts a file cannot prove on a live node —
+        that the surface answers on the nodes as described, and that the
+        per-session vault-access toggle behaves in the real UI. Everything else
+        was verified on the targets this session.
 
 ## Next
 

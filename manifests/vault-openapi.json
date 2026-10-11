@@ -2,11 +2,11 @@
   "openapi": "3.0.3",
   "info": {
     "title": "sparknet vault tools",
-    "version": "1.0.0",
-    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools. Every operation requires Authorization: Bearer <base64url of a signed session grant>, is loopback-only (127.0.0.1:4096), and refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py — the bridge never builds its own ledger shape."
+    "version": "1.1.0",
+    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools. Every operation requires Authorization: Bearer <base64url of a signed session grant>, and the bridge itself is loopback-only; the URL below reaches that loopback from inside the Open WebUI container through extra_hosts host.docker.internal:host-gateway. A tool refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py — the bridge never builds its own ledger shape."
   },
   "servers": [
-    { "url": "http://127.0.0.1:4096", "description": "the node's local dispatch bridge" }
+    { "url": "http://host.docker.internal:4096", "description": "the node's local dispatch bridge (loopback 4096, reached via host-gateway from the webui container)" }
   ],
   "security": [{ "BearerAuth": [] }],
   "components": {
@@ -58,6 +58,13 @@
             }
           },
           "session": { "type": "string" }
+        }
+      },
+      "vaultAccess": {
+        "type": "object",
+        "required": ["mode"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["all", "per-tool"], "description": "'all' lets every vault tool work repeatedly in this session (only this grant's own spent nonce is discounted, until it expires); 'per-tool' restores the one-shot default" }
         }
       }
     }
@@ -133,6 +140,22 @@
         },
         "responses": {
           "200": { "description": "the patched note and its ledger block", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ok" } } } }
+        }
+      }
+    },
+    "/session/{session_id}/vault-access": {
+      "post": {
+        "operationId": "session_vault_access",
+        "summary": "Toggle per-session 'all vault tools' (mode: all|per-tool). 'all' discounts only this grant's own spent nonce so the session's vault tools keep working until the grant expires; scope, expiry, signature and per-mutation audit are unchanged.",
+        "parameters": [
+          { "name": "session_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/vaultAccess" } } }
+        },
+        "responses": {
+          "200": { "description": "the session's new vault_access mode", "content": { "application/json": { "schema": { "type": "object" } } } }
         }
       }
     }

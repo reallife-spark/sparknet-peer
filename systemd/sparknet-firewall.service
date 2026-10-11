@@ -1,0 +1,24 @@
+[Unit]
+Description=Sparknet host firewall (SPARKNET-FW) — keeps the node's published AI-stack ports off the public internet
+Documentation=file:///usr/local/libexec/sparknet/sparknet-firewall
+After=docker.service network-online.target
+Wants=network-online.target
+# A docker daemon restart recreates the DOCKER-USER chain and can drop our
+# FORWARD rule; PartOf makes that restart re-apply these rules too, not just a
+# full reboot.
+PartOf=docker.service
+# The AI-stack surfaces bind on 0.0.0.0; this rule is the second half of that
+# decision. Ordering After=docker.service so DOCKER-USER exists and docker's own
+# DOCKER-USER repopulation cannot clobber the FORWARD rule on a restart.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Location-independent: the tracked unit calls the sparknet-* shim, which the
+# install script places in /usr/local/libexec/sparknet (see
+# scripts/sparknet-install-units.sh).
+ExecStart=/usr/local/libexec/sparknet/sparknet-firewall install
+ExecReload=/usr/local/libexec/sparknet/sparknet-firewall install
+
+[Install]
+WantedBy=multi-user.target

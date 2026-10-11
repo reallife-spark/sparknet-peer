@@ -1,19 +1,20 @@
 {
   "schema_version": "1.0",
   "contract": "node-ai-stack",
-  "description": "A node's own AI stack, as committed config: its own model server (Ollama) and its own chat surface (Open WebUI), the declarative slice of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md. Read by peer-node/tests/test_node_ai_stack.py, which fails the build if the committed topology stops being the loopback-only, own-server-only, no-authority surface the design requires. Cluster fan-out is NOT here: accepting a signed subtask belongs to the task ingress + cluster client (item 5), so nothing in this file can be a vector for delegated inference.",
-  "authored": "2026-10-09",
+  "description": "A node's own AI stack, as committed config: its own chat surface (Open WebUI) standing on its own model server (infra Ollama) and its own vector store (ChromaDB), the declarative slice of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md. Read by peer-node/tests/test_node_ai_stack.py, which fails the build if the committed topology stops being the declared surface the design requires. Cluster fan-out is NOT here: accepting a signed subtask belongs to the task ingress + cluster client (item 5), so nothing in this file can be a vector for delegated inference.",
+  "authored": "2026-10-10",
   "source": "CLUSTER_INFERENCE_DESIGN.md §Docker packaging",
   "status": "declared, not deployed",
 
   "topology": {
-    "services": ["ollama", "open-webui"],
+    "services": ["open-webui"],
     "compose_file": "peer-node/configs/ai-stack/docker-compose.yml",
-    "bind_host": "127.0.0.1",
-    "every_port_is_loopback_only": true,
-    "model_port": "127.0.0.1:11434:11434 (OpenAI-compatible at /v1)",
-    "webui_port": "127.0.0.1:8080:8080",
-    "why_loopback_only": "A node's own prompts never leave the node's containers. Only a served subtask crosses the overlay, and no subtask can arrive here until item 5. Binding 0.0.0.0 would put the node's knowledge on every interface at once."
+    "bind_host": "0.0.0.0 (host network namespace; PORT=8181)",
+    "published_ports": ["0.0.0.0:8181 (host netns)"],
+    "network_mode": "host — the surface must reach the node's loopback-only dispatch bridge (127.0.0.1:4096); a bridge-network container cannot reach a loopback-only host listener (host-gateway resolves to the docker0 gateway, not 127.0.0.1)",
+    "model_server": "the node's infra Ollama, http://127.0.0.1:11434 (never a remote node's overlay address)",
+    "vector_store": "the node's infra ChromaDB, http://127.0.0.1:18000 (its published port)",
+    "why_published": "Operator decision (2026-10-10), network choice revised 2026-10-11: the chat surface answers on the node's LAN and overlay addresses. Binding is not the confidentiality control any more — the SPARKNET-FW host firewall restricts 8181/11434/18000 to loopback + LAN + overlay + Docker bridge subnets, so the exposure is a decision with a rule attached, not an omission."
   },
 
   "gpu": {
@@ -22,10 +23,14 @@
   },
 
   "knowledge_bases": {
-    "vault": "the only knowledge base",
+    "vault": "the only authored knowledge base; readable only through the grant-checked bridge",
     "open_webui_rag": {
-      "RAG_INGESTION_ENABLED": "false",
-      "why": "Open WebUI's own vector store would become a second, grant-less knowledge base — the same rule as the Master admin surface. A parallel store cannot be revoked with a signed entry, which makes it the quieter way to lose control of what the fabric knows."
+      "RAG_INGESTION_ENABLED": "true",
+      "VECTOR_DB": "chroma",
+      "corpus": "structure-only — schema, taxonomy, charters and contracts; never the vault's personal pages",
+      "excluded": ["00_System/user.md", "**/user-env-manifest.json", "**/secrets-index.json", "02_Daily/**", "03_Sources/**", "_staging/**", "_archives/**", ".state/**", "manifests/keys/**", "*.ed25519", ".env"],
+      "builder": "scripts/sparknet-rag-corpus.py",
+      "why": "The operator wants the node's chat surface to know the shape of the fabric without ingesting personal material. The corpus is built from a fixed allow-list and a test asserts no excluded path reaches it, so the vector store never becomes an uncontrolled copy of the vault."
     }
   },
 
@@ -40,10 +45,11 @@
     "selectable_models": ["plan", "build", "vault", "node-orchestrator", "masterspike"],
     "declared_not_database_state": "Open WebUI's panel is a database click; the surface lives in agent-models.json + this compose env so a redeploy cannot lose it (peer PLAN Step 5 DoD 5).",
     "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=plan,build,vault,node-orchestrator,masterspike, DEFAULT_MODELS=plan",
-    "bridge_route": "OPENAI_API_BASE_URLS=http://host.docker.internal:4096/v1 — this node's dispatch bridge, loopback 4096, reached through extra_hosts host.docker.internal:host-gateway. Live reachability from the webui container past the bridge's loopback gate is a target-node check (DoD: confirm: user), like the rest of this stack.",
+    "bridge_route": "OPENAI_API_BASE_URLS=http://127.0.0.1:4096/v1 — this node's dispatch bridge, loopback 4096, reached because Open WebUI shares the host network namespace (network_mode: host).",
     "bridge_key": "OPENAI_API_KEYS expands a deploy-time signed grant ($SPARKNET_WEBUI_BRIDGE_GRANT); no token is committed and the compose fails loudly while it is unset.",
     "approve_deny": "a permission request surfaces as an Approve/Deny card and resolves through POST /session/:id/permissions/:permissionID on the dispatch bridge (peer PLAN Step 5 DoD 2); the decision is recorded in the grant-keyed session.",
-    "rag": "still disabled (RAG_INGESTION_ENABLED=false) — the vault is the only knowledge base (peer PLAN Step 5 DoD 4)."
+    "session_vault_access": "POST /session/:id/vault-access toggles per-session 'all vault tools' (mode: all|per-tool). 'all' drops only the presenting grant's own spent nonce so the grant keeps working in that session until it expires; scope, expiry, signature and per-mutation audit are unchanged. Default stays one-shot.",
+    "rag": "enabled, structure-only corpus, backed by the node's own ChromaDB (peer PLAN Step 5 DoD 4, operator decision 2026-10-10)."
   },
 
   "conversation_passing": {
@@ -72,5 +78,12 @@
     "why_structural": "A deny rule governs a process that may later ignore it. This stack is declared without the mounts a key or a socket would need, which makes the boundary structural rather than a permission statement."
   },
 
-  "not_built_yet": "This is a declaration, not a deployment. No model server or Open WebUI is installed on this host, no image is pulled, and nothing binds 11434 or 8080; the MASTERSPIKE Ollama model is likewise not created (this host has an `ollama` binary but no running daemon — `make model-build` will refuse with Ollama's own error until one is served). The deployed healthcheck — pull the images on a target node, run the stack, confirm the surfaces answer with no GPU present, create and serve the model — is `DoD: confirm: user`. The assertions in test_node_ai_stack.py and test_masterspike.py are read off these files, the compose file and the generated artifacts, and are therefore only as strong as the files: they prove the declared topology and the artifacts are coherent, not that a real deployment held."
+  "network_boundary": {
+    "host_firewall": "SPARKNET-FW (iptables DOCKER-USER + INPUT, ip6tables INPUT) on each node",
+    "allowed_sources": ["loopback", "192.168.178.0/24 (LAN)", "10.100.0.0/24 (wg1 overlay)", "172.16.0.0/12 (docker bridges)", "link-local"],
+    "exposed_ports": ["8181 (webui)", "11434 (ollama)", "18000 (chroma)"],
+    "why": "Publishing on 0.0.0.0 also publishes on the node's global IPv6. The firewall keeps the fabric fully functional (overlay, LAN, loopback, docker nets, wg1) while blocking direct public-internet reach to those ports."
+  },
+
+  "not_built_yet": "This describes the deployed shape; the assertion of a *live* Open WebUI, a running bridge grant and a working firewall is a target-node check. The assertions in test_node_ai_stack.py are read off these files and the compose file, and are therefore only as strong as the files: they prove the declared topology is coherent, not that a real deployment held."
 }

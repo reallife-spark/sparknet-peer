@@ -508,6 +508,95 @@ def test_patch_must_match_exactly_one_occurrence(server, ctx):
     assert "exactly one" in payload["detail"]
 
 
+# --- the session "all vault tools" toggle -----------------------------------
+
+
+def _open_session(server, ctx, grant) -> None:
+    server.request(
+        "POST",
+        "/v1/chat/completions",
+        {"model": "chat", "messages": [{"role": "user", "content": "open"}]},
+        token=_bearer(grant),
+    )
+
+
+def test_vault_access_toggle_rejects_an_unknown_mode(server, ctx):
+    grant = _grant(ctx)
+    status, payload = server.request(
+        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "sometimes"}, token=_bearer(grant)
+    )
+    assert status == 400
+    assert payload["reason"] == "malformed"
+
+
+def test_vault_access_all_requires_a_scope(server, ctx):
+    grant = _grant(ctx, vault_scope=[])
+    status, payload = server.request(
+        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "all"}, token=_bearer(grant)
+    )
+    assert status == 403
+    assert payload["reason"] == "no-scope"
+
+
+def test_vault_access_all_permits_repeated_writes_and_reads(server, ctx):
+    grant = _grant(ctx)
+    _open_session(server, ctx, grant)
+    status, payload = server.request(
+        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "all"}, token=_bearer(grant)
+    )
+    assert status == 200, payload
+    assert payload["vault_access"] == "all"
+
+    first = server.request(
+        "POST",
+        "/vault/capture",
+        {"target": "05_Knowledge/concepts/all-1.md", "body": "# all-1\n", "session": "webui-all"},
+        token=_bearer(grant),
+    )
+    assert first[0] == 200, first[1]
+    second = server.request(
+        "POST",
+        "/vault/capture",
+        {"target": "05_Knowledge/concepts/all-2.md", "body": "# all-2\n", "session": "webui-all"},
+        token=_bearer(grant),
+    )
+    assert second[0] == 200, second[1]
+    assert (ctx["vault"] / "05_Knowledge" / "concepts" / "all-1.md").is_file()
+    assert (ctx["vault"] / "05_Knowledge" / "concepts" / "all-2.md").is_file()
+
+    read = server.request(
+        "GET", "/vault/cat?path=05_Knowledge/concepts/all-1.md", token=_bearer(grant)
+    )
+    assert read[0] == 200, "a session in all-mode must still read after its first write"
+
+
+def test_vault_access_per_tool_restores_the_one_shot_rule(server, ctx):
+    grant = _grant(ctx)
+    _open_session(server, ctx, grant)
+    server.request(
+        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "all"}, token=_bearer(grant)
+    )
+    first = server.request(
+        "POST",
+        "/vault/capture",
+        {"target": "05_Knowledge/concepts/toggle-1.md", "body": "# toggle-1\n", "session": "webui-all"},
+        token=_bearer(grant),
+    )
+    assert first[0] == 200, first[1]
+    back = server.request(
+        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "per-tool"}, token=_bearer(grant)
+    )
+    assert back[0] == 200 and back[1]["vault_access"] == "per-tool"
+    second = server.request(
+        "POST",
+        "/vault/capture",
+        {"target": "05_Knowledge/concepts/toggle-2.md", "body": "# toggle-2\n", "session": "webui-all"},
+        token=_bearer(grant),
+    )
+    assert second[0] == 403, "switching back to per-tool must re-spend the nonce"
+    assert not (ctx["vault"] / "05_Knowledge" / "concepts" / "toggle-2.md").exists()
+
+
 # --- DoD 5: the OpenAPI spec is present and describes the tools ---------------
 
 

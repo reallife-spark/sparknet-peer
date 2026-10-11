@@ -36,6 +36,8 @@ the branch, and the `share` verbs declare a session-view/session-handoff share
 (the clocked, cross-node sharing regime is Step 8).
 """
 
+from __future__ import annotations
+
 import argparse
 import base64
 import importlib.util
@@ -43,7 +45,12 @@ import json
 import os
 import sys
 import urllib.parse
-from collections.abc import Callable
+
+try:  # Python 3.9+
+    from collections.abc import Callable
+except ImportError:  # pragma: no cover - Python 3.8
+    from typing import Callable  # noqa: UP035
+
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -353,18 +360,29 @@ class Bridge:
             raise _HttpRequestError(401, "missing-grant", "Bearer grant has no grant_id")
         return grant
 
-    def verify_grant(self, grant: dict[str, Any]) -> None:
-        """Guard-protocol order, exactly as shared/sparknet-authz.py's verify_grant."""
+    def verify_grant(self, grant: dict[str, Any], *, allow_spent_nonce: bool = False) -> None:
+        """Guard-protocol order, exactly as shared/sparknet-authz.py's verify_grant.
+
+        ``allow_spent_nonce`` is set only for a grant whose session has turned on
+        the ``vault_access: all`` toggle: its own nonce is dropped from the
+        consumed set so a session the operator made reusable keeps working after
+        its first mutation. No other grant's nonce is discounted, and every other
+        guard-protocol step still runs.
+        """
         master_b64 = str(self.registry().get("master_public_key_b64") or "")
         if not master_b64:
             raise _HttpRequestError(503, "no-verifier", "registry carries no master_public_key_b64")
+        consumed = self.prov.consumed_grant_nonces(self.vault_root)
+        if allow_spent_nonce:
+            consumed = set(consumed)
+            consumed.discard(str(grant.get("nonce") or ""))
         try:
             decision = self.authz.verify_grant(
                 grant,
                 master_public_key=self.authz.public_key_from_b64(master_b64),
                 registry=self.registry(),
                 node_identity=self.node_identity(),
-                consumed_nonces=self.prov.consumed_grant_nonces(self.vault_root),
+                consumed_nonces=consumed,
                 now=self._now(),
             )
         except (self.authz.AuthzError, self.prov.ProvenanceError) as exc:
@@ -373,6 +391,16 @@ class Bridge:
             raise _HttpRequestError(
                 403, "grant-refused", f"{decision.reason}: grant {grant.get('grant_id', '?')} refused"
             )
+
+    def session_allows_reuse(self, grant: dict[str, Any]) -> bool:
+        """True when the grant's session has enabled ``vault_access: all``.
+
+        Read on every plain request (reads included) so a session that has taken
+        the toggle and performed a write can still read and chat with the same
+        grant. A missing session is ``False`` — the default stays one-shot.
+        """
+        session = self.load_session(str(grant.get("grant_id") or ""))
+        return bool(session) and session.get("vault_access") == "all"
 
     # -- sessions (persistent, keyed by grant_id) --------------------------------
 
@@ -660,6 +688,53 @@ class Bridge:
         self._save_session(session)
         return {"ok": True, "permission": record}
 
+    # -- session vault access (the "all vault tools" toggle) --------------------
+
+    def session_vault_access(self, body: dict[str, Any], grant: dict[str, Any]) -> dict[str, Any]:
+        """Turn the session-wide "all vault tools" mode on or off.
+
+        ``mode: "all"`` makes every vault tool usable repeatedly in this session
+        by dropping *this grant's own* spent nonce from the reuse set until the
+        grant expires; ``mode: "per-tool"`` restores the one-shot default. The
+        toggle is gated on a valid, presented grant with a non-empty vault_scope
+        (a scope-less grant can reach no note, so there is nothing to widen), and
+        it opens no scope the grant did not already carry — only how often it may
+        be used. Enabling requires the grant the caller already presents; it is
+        not a capability a session can self-grant beyond what the Master signed.
+        """
+        mode = str(body.get("mode") or "")
+        if mode not in ("all", "per-tool"):
+            raise _HttpRequestError(400, "malformed", "mode must be 'all' or 'per-tool'")
+        if mode == "all" and not list(grant.get("vault_scope") or []):
+            raise _HttpRequestError(
+                403, "no-scope", "this grant carries no vault_scope; there is no vault tool to widen"
+            )
+        grant_id = str(grant["grant_id"])
+        session = self.load_session(grant_id)
+        if session is None:
+            session = {
+                "schema": SESSION_SCHEMA,
+                "session_id": grant_id,
+                "owner_grant_id": grant_id,
+                "grant_id": grant_id,
+                "created_at": self._now().isoformat(),
+                "model": "plan",
+                "agent": "plan",
+                "conversation": [],
+                "children": [],
+                "permissions": [],
+            }
+        session["vault_access"] = mode
+        session["vault_access_set_at"] = self._now().isoformat()
+        session["updated_at"] = self._now().isoformat()
+        self._save_session(session)
+        return {
+            "ok": True,
+            "session_id": session["session_id"],
+            "vault_access": mode,
+            "vault_scope": list(grant.get("vault_scope") or []),
+        }
+
     # -- vault tools -------------------------------------------------------------
 
     @staticmethod
@@ -716,6 +791,7 @@ class Bridge:
                 agent=str(body.get("agent") or "grant"),
                 model=str(body.get("model") or "local"),
                 clock=self.clock,
+                allow_reused_nonce=self.session_allows_reuse(grant),
             )
         except self.prov.ProvenanceError as exc:
             raise _HttpRequestError(403 if "grant refused" in str(exc) else 400, "refused", str(exc))
@@ -743,6 +819,7 @@ class Bridge:
                 agent=str(body.get("agent") or "grant"),
                 model=str(body.get("model") or "local"),
                 clock=self.clock,
+                allow_reused_nonce=self.session_allows_reuse(grant),
             )
         except self.prov.ProvenanceError as exc:
             raise _HttpRequestError(403 if "grant refused" in str(exc) else 400, "refused", str(exc))
@@ -770,6 +847,7 @@ class Bridge:
                 agent=str(body.get("agent") or "grant"),
                 model=str(body.get("model") or "local"),
                 clock=self.clock,
+                allow_reused_nonce=self.session_allows_reuse(grant),
             )
         except self.prov.ProvenanceError as exc:
             raise _HttpRequestError(403 if "grant refused" in str(exc) else 400, "refused", str(exc))
@@ -807,6 +885,8 @@ class Bridge:
             parts = [part for part in rest.split("/") if part]
             if not parts:
                 raise _HttpRequestError(404, "unknown-path", f"{method} /session/")
+            if method == "POST" and len(parts) == 2 and parts[1] == "vault-access":
+                return 200, self.session_vault_access(body, grant)
             session = self._require_owned_session(parts[0], grant)
             if method == "GET" and len(parts) == 1:
                 return 200, {"ok": True, "session": session}
@@ -882,7 +962,7 @@ def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) ->
                 if not auth.startswith("Bearer "):
                     raise _HttpRequestError(401, "missing-grant", "Authorization: Bearer <grant> is required")
                 grant = bridge.decode_grant(auth[len("Bearer ") :].strip())
-                bridge.verify_grant(grant)
+                bridge.verify_grant(grant, allow_spent_nonce=bridge.session_allows_reuse(grant))
                 path, _, raw_query = self.path.partition("?")
                 query = urllib.parse.parse_qs(raw_query)
                 code, payload = bridge.handle(method, path, query, body, grant)
