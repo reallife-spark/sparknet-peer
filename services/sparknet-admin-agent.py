@@ -247,7 +247,7 @@ def ensure_auth_webhooks(base: str, token: str, url: str,
             wid = row.get("id")
             if not wid:
                 continue
-            res, resp = _http_json(f"{base}/api/events/webhooks/{wid}", "PATCH",
+            res, resp = _http_json(f"{base}/api/events/webhooks/{wid}", "PUT",
                                    token, {"url": url, "events": list(events), "enabled": True})
             if res != 200:
                 raise Refusal(f"webhook update failed: HTTP {res}: {resp}")

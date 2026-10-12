@@ -179,7 +179,7 @@ def test_webhook_registration_updates_an_existing_url(tmp_path: Path) -> None:
         calls.append((method, url))
         if method == "GET":
             return 200, {"webhooks": [{"id": "w9", "url": "http://127.0.0.1:4130/events"}]}
-        if method == "PATCH":
+        if method == "PUT":
             assert url.endswith("/api/events/webhooks/w9")
             assert body and "events" in body
             return 200, {"id": "w9"}

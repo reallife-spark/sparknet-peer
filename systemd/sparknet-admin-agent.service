@@ -11,7 +11,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+# Run as the NODE's own user — the same user that runs the dispatch bridge — so
+# the auth-event spool this agent writes under the state dir is readable by the
+# bridge that answers `list_events`/`feed` over the overlay. As root the spool
+# was written root:0600 and the bridge's read failed (HTTP 500 internal). The
+# paths below are absolute precisely because this is a system unit under the
+# system manager (not %h); the operator's home is where the site-local password
+# and the cluster2 state live.
+User=raxxar
 # No WorkingDirectory: the generated shim resolves the vault. The WebUI answers
 # on the node's own loopback (host-net stack, PORT 8181), the admin password
 # lives site-local under the *operator's* home (root's ~ would not find it), and

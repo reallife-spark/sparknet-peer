@@ -64,6 +64,13 @@ services:
       # Auth/API audit trail at metadata level (user, IP, method, URL): the
       # node-local complement to the auth-event webhooks the admin agent ingests.
       AUDIT_LOG_LEVEL: "METADATA"
+      # The admin agent registers its auth-event webhook on a LOOPBACK address
+      # (http://127.0.0.1:4130/events; it shares this host netns). Open WebUI
+      # refuses any non-global webhook URL unless this is set
+      # (retrieval/web/utils.py `_assert_addresses_allowed`), crashing the agent
+      # with `HTTP 400 The URL you provided is invalid`. Loopback-only is exactly
+      # the design here — the agent never listens on the wire — so opt in.
+      ENABLE_LOCAL_WEB_FETCH: "true"
       WEBUI_ADMIN_EMAIL: "${SPARKNET_WEBUI_ADMIN_EMAIL:-}"
       WEBUI_ADMIN_PASSWORD: "${SPARKNET_WEBUI_ADMIN_PASSWORD:-}"
       WEBUI_ADMIN_NAME: "${SPARKNET_WEBUI_ADMIN_NAME:-Sparknet Admin}"
