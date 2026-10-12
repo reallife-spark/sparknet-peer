@@ -11,9 +11,12 @@ the dispatch bridge:
 * the **plain** personality answers the Open WebUI surface — OpenAI-compatible
   `/v1/models` and `/v1/chat/completions`, `/session/<grant_id>`, and
   `/vault/*` tools (list, cat, capture, promote, patch) as described by
-  `manifests/vault-openapi.json`. Every plain route is loopback-only and
-  requires `Authorization: Bearer <base64url of a signed grant>`; the grant is
-  verified in guard-protocol order before anything is read or written.
+  `manifests/vault-openapi.json`. The OpenAI/session/vault routes are
+  loopback-only (`LOCAL_ONLY_PREFIXES`) and require
+  `Authorization: Bearer <base64url of a signed grant>`; the grant is
+  verified in guard-protocol order before anything is read or written. The
+  `/admin/*` route is the exception — Master-signed, no Bearer, and (Phase 5)
+  the one plain surface reachable from the overlay.
 
 Sessions are **persistent**, keyed by `grant_id`, stored under the state dir
 (`$SPARKNET_STATE_DIR/sessions/` or `$VAULT_ROOT/.state/sessions/`), so a
@@ -44,6 +47,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import urllib.parse
 
 try:  # Python 3.9+
@@ -60,6 +64,14 @@ STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "D
 DEFAULT_PORT = 4096
 DEFAULT_BIND = "127.0.0.1"
 PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/", "/admin/")
+#: The local personality of the bridge. These routes inject the caller's user
+#: environment profile (OpenAI proxy), carry grant-keyed sessions, or read/write
+#: the node's own vault — so they must never be reachable from the overlay. When
+#: the bridge is bound to an overlay address (fabric Step 29 Phase 5, to expose
+#: ``/admin/*`` to the Master), naming them here makes the shared transport refuse
+#: an overlay source with 403 before the request is read. ``/admin/*`` is
+#: deliberately absent: it is the one surface meant to be overlay-reachable.
+LOCAL_ONLY_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/")
 ADMIN_PREFIX = "/admin/"
 ADMIN_REPLAY_TTL_SECONDS = 300
 SESSION_SCHEMA = "sparknet-session/2"
@@ -1246,8 +1258,11 @@ def _make_router(states: list[str]) -> Callable[[str, str, dict[str, Any], dict[
 def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) -> type:
     """A handler that multiplexes the signed envelope and the plain surface.
 
-    Every caller is loopback-local; the node's own Open WebUI and agent sessions
-    are the only clients. The signed personality passes through to
+    The OpenAI/session/vault routes are loopback-local: the node's own Open
+    WebUI and agent sessions are their only clients, and a caller from the
+    overlay is refused before the request is read. ``/admin/*`` is the
+    exception — the Master reaches it over the overlay, where the signed
+    request ladder is the guard. The signed personality passes through to
     shared/sparknet-http.py's behavior untouched, so the fabric's existing
     transport tests keep applying.
     """
@@ -1258,15 +1273,20 @@ def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) ->
         def _is_plain(self) -> bool:
             return self.path.split("?", 1)[0].startswith(PLAIN_PREFIXES)
 
-        def _loopback_guard(self) -> None:
-            source = self.client_address[0]
-            if source not in ("127.0.0.1", "::1"):
-                raise _HttpRequestError(403, "off-loopback", f"this surface is loopback-only; caller {source}")
-
         def _plain(self, method: str, body: dict[str, Any]) -> None:
             try:
-                self._loopback_guard()
                 path, _, raw_query = self.path.partition("?")
+                # Route-class source policy: the OpenAI/session/vault routes are
+                # loopback-only; ``/admin/*`` is the one surface the Master may
+                # reach over the overlay (fabric Step 29 Phase 5). This is the
+                # same check the shared signed handler applies, so one tuple
+                # (``LOCAL_ONLY_PREFIXES``) names the local personality.
+                source = bridge.http.source_kind(self.client_address)
+                reason = bridge.http.check_source_policy(path, source, LOCAL_ONLY_PREFIXES)
+                if reason is not None:
+                    raise _HttpRequestError(
+                        403, reason, f"{path} is loopback-only; the caller is from the {source} personality"
+                    )
                 if path.startswith(ADMIN_PREFIX):
                     code, payload = bridge.handle_admin(method, path, body)
                     self._send(code, payload)
@@ -1321,6 +1341,20 @@ def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) ->
     return Handler
 
 
+def _configure_server(server, *, http, signed_router, public_key, clock):
+    """Stamp the attributes the shared handler reads off ``self.server``."""
+    server.router = signed_router  # type: ignore[attr-defined] - signed personality
+    server.public_key = public_key  # type: ignore[attr-defined]
+    server.clock = clock  # type: ignore[attr-defined]
+    server.max_age_seconds = http.DEFAULT_MAX_AGE_SECONDS  # type: ignore[attr-defined]
+    # The local personality: OpenAI/session/vault routes are reachable only from
+    # loopback even when the bridge also listens on an overlay address. ``/admin/``
+    # and the signed ``/v1/status`` are deliberately *not* named, so the Master
+    # can reach the signed admin surface over the overlay (fabric Step 29).
+    server.loopback_only_routes = LOCAL_ONLY_PREFIXES  # type: ignore[attr-defined]
+    return server
+
+
 def serve(
     bind,
     port,
@@ -1331,32 +1365,55 @@ def serve(
     ready=None,
     clock=None,
 ):
-    """Serve the combined surface on (bind, port). Refuses to bind unsigned."""
+    """Serve the combined surface on (bind, port). Refuses to bind unsigned.
+
+    ``bind`` is one address, or an iterable of addresses. Listing loopback *and*
+    the node's overlay address in one call is how Phase 5 exposes ``/admin/*`` to
+    the Master without dropping the node's own loopback consumers — and without
+    ever binding a wildcard, which would put the bridge on the LAN.
+    """
     http = _load_http()
     authz = http._load_authz()
     private_key = _load_keypair(vault_root, authz)
     if private_key is None:
         log("ERROR", "no node key in the state dir; run `make user-init` (serve refuses to bind unsigned)")
         return 1
+    binds = (bind,) if isinstance(bind, str) else tuple(bind)
+    if not binds:
+        log("ERROR", "no bind address given")
+        return 1
     bridge = Bridge(vault_root, registry=registry, node_identity=node_identity, clock=clock)
     signed_router = _make_router(STATES)
-    server = ThreadingHTTPServer((bind, port), _make_handler(bridge, STATES, signed_router))
-    server.router = signed_router  # type: ignore[attr-defined] - signed personality
-    server.public_key = private_key.public_key()  # type: ignore[attr-defined]
-    server.clock = clock  # type: ignore[attr-defined]
-    server.max_age_seconds = http.DEFAULT_MAX_AGE_SECONDS  # type: ignore[attr-defined]
-    server.loopback_only_routes = ()  # type: ignore[attr-defined]
+    handler = _make_handler(bridge, STATES, signed_router)
+    servers = []
+    for address in binds:
+        server = ThreadingHTTPServer((address, port), handler)
+        _configure_server(
+            server,
+            http=http,
+            signed_router=signed_router,
+            public_key=private_key.public_key(),
+            clock=clock,
+        )
+        servers.append(server)
     if ready is not None:
         ready()
-    log("INFO", f"serving signed + OpenAI surface on {bind}:{port} (PPP states: {', '.join(STATES)})")
+    for server in servers:
+        log("INFO", f"serving signed + OpenAI surface on {server.server_address[0]}:{server.server_address[1]}")
+    log("INFO", f"signed + OpenAI surface (PPP states: {', '.join(STATES)})")
     log("INFO", APPROVALS_NOTE)
     log("INFO", f"models: {', '.join(m['id'] for m in _available_models(vault_root)) or '(none)'}")
+    extra = [threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True) for s in servers[1:]]
+    for thread in extra:
+        thread.start()
     try:
-        server.serve_forever(poll_interval=0.5)
+        servers[0].serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        for server in servers:
+            server.shutdown()
+            server.server_close()
     return 0
 
 
@@ -1365,7 +1422,12 @@ def main():
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--health", action="store_true", help="Health check")
     p.add_argument("--serve", action="store_true", help="Serve the combined signed + OpenAI surface")
-    p.add_argument("--bind", default=DEFAULT_BIND, help=f"bind address for --serve (default {DEFAULT_BIND})")
+    p.add_argument(
+        "--bind",
+        action="append",
+        default=None,
+        help=f"bind address for --serve; repeat to serve on several (default {DEFAULT_BIND})",
+    )
     p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port for --serve (default {DEFAULT_PORT})")
     p.add_argument("--registry", type=Path, help="override the Master-signed registry manifest")
     p.add_argument("--node-identity", type=Path, help="override the node identity manifest")
@@ -1384,7 +1446,13 @@ def main():
         return
 
     if args.serve:
-        return serve(args.bind, args.port, vault_root, registry=args.registry, node_identity=args.node_identity)
+        return serve(
+            args.bind or [DEFAULT_BIND],
+            args.port,
+            vault_root,
+            registry=args.registry,
+            node_identity=args.node_identity,
+        )
 
     if args.dry_run:
         log("INFO", "DRY-RUN: PPE workflow ready (PLAN→PERMISSION→EXECUTE)")

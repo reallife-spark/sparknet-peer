@@ -526,3 +526,98 @@ def test_list_events_skips_corrupt_rows_and_caps_the_response(server, ctx, maste
     assert payload["total"] == bridge_mod.ADMIN_EVENTS_MAX + 3
     assert payload["truncated"] is True
     assert payload["events"][-1]["ts"] == good[-1]["ts"]
+
+
+# --- the overlay bind (fabric Step 29 phase 5, finding F1) --------------------
+
+
+def _non_loopback_ipv4() -> str | None:
+    """The primary non-loopback IPv4, or None when the host has only loopback."""
+
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))  # TEST-NET-1: picks a route, sends nothing
+        address = probe.getsockname()[0]
+        return None if address.startswith("127.") else address
+    except OSError:
+        return None
+    finally:
+        probe.close()
+
+
+def test_the_bridge_names_its_local_personality_for_overlay_binds():
+    """F1: the local surface is a named route class, ``/admin/*`` excepted.
+
+    When the bridge is bound to the overlay it must expose *only* ``/admin/*``
+    to the fabric. ``serve()`` stamps ``LOCAL_ONLY_PREFIXES`` on every listener,
+    so the OpenAI proxy, sessions and vault tools stay loopback-only while the
+    Master can still reach the signed admin surface.
+    """
+    http = bridge_mod._load_http()
+    local = bridge_mod.LOCAL_ONLY_PREFIXES
+    for prefix in ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/"):
+        assert prefix in local
+        assert http.check_source_policy(prefix, "overlay", local) == "not-loopback"
+        assert http.check_source_policy(prefix, "loopback", local) is None
+    # the admin surface is deliberately *not* local-only
+    assert "/admin/" not in local
+    assert http.check_source_policy("/admin/list_users", "overlay", local) is None
+    assert http.check_source_policy("/admin/list_users", "loopback", local) is None
+
+
+def test_overlay_source_is_refused_on_local_routes_but_serves_admin(ctx):
+    """F1 live: one overlay-bound listener, two personalities.
+
+    The listener binds ``0.0.0.0`` (the face the Master dials). A request from a
+    non-loopback source is refused ``403 not-loopback`` on ``/v1/models`` before
+    the grant is read, while ``/admin/list_users`` passes the source policy and
+    fails later on the signed ladder (an empty body is ``malformed``). From
+    loopback neither is refused by the source policy.
+    """
+    source = _non_loopback_ipv4()
+    if source is None:
+        pytest.skip("no non-loopback IPv4 address to act as the overlay source")
+
+    bridge = bridge_mod.Bridge(ctx["vault"], registry=ctx["registry_path"], clock=lambda: NOW)
+    handler = bridge_mod._make_handler(bridge, bridge_mod.STATES, bridge_mod._make_router(bridge_mod.STATES))
+    server = ThreadingHTTPServer(("0.0.0.0", 0), handler)
+    bridge_mod._configure_server(
+        server,
+        http=bridge_mod._load_http(),
+        signed_router=bridge_mod._make_router(bridge_mod.STATES),
+        public_key=None,
+        clock=lambda: NOW,
+    )
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+
+    def _call(host: str, method: str, path: str, payload: dict | None = None):
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        try:
+            body = None if payload is None else json.dumps(payload)
+            headers = {} if payload is None else {"Content-Type": "application/json"}
+            conn.request(method, path, body, headers)
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    try:
+        status, payload = _call(source, "GET", "/v1/models")
+        assert status == 403 and payload["reason"] == "not-loopback", payload
+
+        _, payload = _call(source, "POST", "/admin/list_users", {})
+        assert payload.get("reason") != "not-loopback", payload
+
+        _, payload = _call("127.0.0.1", "GET", "/v1/models")
+        assert payload.get("reason") != "not-loopback", payload
+
+        _, payload = _call("127.0.0.1", "POST", "/admin/list_users", {})
+        assert payload.get("reason") != "not-loopback", payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
