@@ -52,6 +52,15 @@
     "rag": "enabled, structure-only corpus, backed by the node's own ChromaDB (peer PLAN Step 5 DoD 4, operator decision 2026-10-10)."
   },
 
+  "admin_federation": {
+    "design": "ADMIN_FEDERATION_DESIGN.md (fabric root, fabric PLAN Step 29 phase 1)",
+    "signup": "ENABLE_SIGNUP=true with DEFAULT_USER_ROLE=pending — a new account lands pending and reaches nothing until the Master (via this node's admin agent) accepts it; self-registration is allowed because approval is the gate",
+    "service_account_admin": "the node's WebUI admin is a MACHINE account: created headlessly from WEBUI_ADMIN_* deploy-time vars, password generated at deploy under the node state dir at 0600, read by exactly the provisioner and the admin agent — no human logs in as administrator on a peer",
+    "admin_agent": "services/sparknet-admin-agent.py (stdlib-only): loopback listener ingesting auth-event webhooks (auth.signup/auth.login/auth.logout/auth.password_changed/user.role_updated) into $SPARKNET_STATE_DIR/admin-events/events.jsonl at 0600; --register-webhooks configures the node's own Open WebUI via POST /api/events/webhooks (successful logins only — auth.login fires on success)",
+    "audit": "AUDIT_LOG_LEVEL=METADATA in the compose — node-local metadata audit trail alongside the event spool",
+    "supervise": "admin-supervise is adopted into the local vocabulary + bridge /admin/* route (fabric Step 29 phase 2), executed only for requests the Master signed and this node's own registry granted; the route stays inert (capability_missing) otherwise and reaches the node's own WebUI only over loopback with the node's own service-account token"
+  },
+
   "conversation_passing": {
     "contract": "the /session/:id native verbs on the dispatch bridge (peer PLAN Step 6)",
     "message": "POST /session/:id/message accepts an 'agent' and hands the conversation off with history intact (Step 6 DoD 1)",
@@ -85,5 +94,5 @@
     "why": "Publishing on 0.0.0.0 also publishes on the node's global IPv6. The firewall keeps the fabric fully functional (overlay, LAN, loopback, docker nets, wg1) while blocking direct public-internet reach to those ports."
   },
 
-  "not_built_yet": "This describes the deployed shape; the assertion of a *live* Open WebUI, a running bridge grant and a working firewall is a target-node check. The assertions in test_node_ai_stack.py are read off these files and the compose file, and are therefore only as strong as the files: they prove the declared topology is coherent, not that a real deployment held."
+  "not_built_yet": "This describes the deployed shape; the assertion of a *live* Open WebUI, a running bridge grant and a working firewall is a target-node check. The assertions in test_node_ai_stack.py are read off these files and the compose file, and are therefore only as strong as the files: they prove the declared topology is coherent, not that a real deployment held. The admin agent is declared here and its code lives in services/sparknet-admin-agent.py; its live signup→pending→approve cycle is a fabric Step 29 `DoD: confirm: user`."
 }

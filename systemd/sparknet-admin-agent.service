@@ -1,0 +1,30 @@
+[Unit]
+Description=Sparknet admin agent — node auth-event ingest and pending-signup supervision
+Documentation=file:///usr/local/libexec/sparknet/sparknet-admin-agent
+# The agent reads the node's Open WebUI users with the service-account token and
+# receives the webui's auth-event webhooks on loopback:4130, so it wants the AI
+# stack up. The webui container is launched by docker compose, not a unit, so
+# docker.service is the hard ordering point and the agent's own RetrySec
+# absorbs the webui startup window.
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# No WorkingDirectory: the generated shim resolves the vault. The WebUI answers
+# on the node's own loopback (host-net stack, PORT 8181), the admin password
+# lives site-local under the *operator's* home (root's ~ would not find it), and
+# the state dir is the node's cluster2 runtime state. Registration and the
+# snapshot happen once at start; the listener runs for the process lifetime.
+Environment=SPARKNET_WEBUI=http://127.0.0.1:8181
+Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/.local/state/sparknet/cluster2/webui-admin-password
+Environment=SPARKNET_STATE_DIR=/home/raxxar/.local/state/sparknet/cluster2
+# 127.0.0.1:4130 only: the webhook ingress is consumed by the node's own Open
+# WebUI (host netns). No LAN/overlay listener, ever.
+ExecStart=/usr/local/libexec/sparknet/sparknet-admin-agent --register-webhooks --serve
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -257,6 +257,64 @@ def test_empty_capabilities_is_rejected(master_key, identity: dict) -> None:
     assert decision.reason == authz.REASON_BAD_SIGNATURE
 
 
+# --- admin requests (admin-supervise, fabric Step 29 phase 2) ----------------
+
+
+def _admin_request(**overrides: object) -> dict:
+    request = {
+        "request_id": "admin-req-0001",
+        "conversation_id": None,
+        "master_node_id": "master-0001",
+        "target_node_id": "sparknet-node-0001",
+        "target_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+        "issued_at": int(NOW.timestamp()),
+        "expires_at": int(NOW.timestamp()) + 600,
+        "nonce": "nonce-0001",
+        "action": "set_user_role",
+        "user_id": "user-07",
+        "user_email": "ana@example.test",
+        "role": "user",
+        "kb_id": None,
+        "chat_id": None,
+    }
+    request.update(overrides)
+    return request
+
+
+def test_admin_request_missing_required_field_is_rejected() -> None:
+    for field in ("request_id", "master_node_id", "target_node_id",
+                  "target_fingerprint", "issued_at", "expires_at", "nonce", "action"):
+        request = _admin_request(**{field: None})
+        with pytest.raises(authz.AuthzError, match="missing required"):
+            authz.admin_request_message(request)
+
+
+def test_admin_request_unknown_action_is_rejected() -> None:
+    request = _admin_request(action="root-everything")
+    with pytest.raises(authz.AuthzError, match="unknown admin action"):
+        authz.admin_request_message(request)
+
+
+def test_admin_request_projection_is_deterministic() -> None:
+    """Same fields, same order — the peer re-hashes exactly what the Master signed."""
+    first = authz.admin_request_message(_admin_request())
+    second = authz.admin_request_message(_admin_request())
+    assert first == second
+
+
+def test_admin_request_message_roundtrip_signs_and_verifies(master_key) -> None:
+    """The request envelope signs like any other authorization object."""
+    request = _admin_request()
+    message = authz.admin_request_message(request)
+    signature = base64.b64encode(master_key.sign(message)).decode("ascii")
+    request["signature_b64"] = signature
+    assert authz.verify_signature(master_key.public_key(), signature, message) is True
+
+    request["role"] = "admin"
+    tampered = authz.admin_request_message(request)
+    assert authz.verify_signature(master_key.public_key(), signature, tampered) is False
+
+
 # --- tracked artefacts -------------------------------------------------------
 
 

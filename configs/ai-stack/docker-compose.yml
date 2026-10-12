@@ -51,11 +51,19 @@ services:
       # being a node.
       OLLAMA_BASE_URL: "http://127.0.0.1:11434"
       WEBUI_AUTH: "true"
-      # ENABLE_SIGNUP stays false; the first admin is created headlessly from the
-      # WEBUI_ADMIN_* vars below on first startup when no users exist, so a chat
-      # surface is never self-service. Both are deploy-time variables; no
-      # password is ever committed.
-      ENABLE_SIGNUP: "false"
+      # Signup is enabled but approval-mediated (fabric ADMIN_FEDERATION_DESIGN.md):
+      # a new account lands `pending` and reaches nothing until the Master (via
+      # this node's admin agent) accepts it. The node's own admin is a MACHINE
+      # service account, created headlessly from the WEBUI_ADMIN_* vars below on
+      # first startup; its password is generated at deploy under the node state
+      # dir at 0600 and read only by the provisioner and the admin agent, so no
+      # human logs in as administrator on a peer. Every value here is deploy-time;
+      # no password is ever committed.
+      ENABLE_SIGNUP: "true"
+      DEFAULT_USER_ROLE: "pending"
+      # Auth/API audit trail at metadata level (user, IP, method, URL): the
+      # node-local complement to the auth-event webhooks the admin agent ingests.
+      AUDIT_LOG_LEVEL: "METADATA"
       WEBUI_ADMIN_EMAIL: "${SPARKNET_WEBUI_ADMIN_EMAIL:-}"
       WEBUI_ADMIN_PASSWORD: "${SPARKNET_WEBUI_ADMIN_PASSWORD:-}"
       WEBUI_ADMIN_NAME: "${SPARKNET_WEBUI_ADMIN_NAME:-Sparknet Admin}"

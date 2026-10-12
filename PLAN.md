@@ -1,7 +1,7 @@
 ---
 title: sparknet peer-node Plan
-updated: 2026-10-11
-current: done
+updated: 2026-10-12
+current: 12
 ---
 
 # sparknet peer-node — Active Plan
@@ -560,6 +560,32 @@ current: done
         `knowledge/<id>/file/add`, `access_grants` dict shape, admin-token
         grants). Deployment on a real signup+Accept cycle is
         `DoD: confirm: user`.
+
+## Step 12 — Node admin agent: auth events + pending-signup supervision
+
+- [ ] **Step 12** — Give each peer node a local, stdlib-only agent that turns
+      the node's own Open WebUI into an approval-mediated surface the Master can
+      supervise: signup is enabled with accounts landing `pending`, and the
+      agent ingests the auth-event webhooks so signups and successful logins are
+      recorded on the node.
+      Design: `../ADMIN_FEDERATION_DESIGN.md` (fabric root, fabric Step 29).
+      - **DoD**: (1) `configs/ai-stack/docker-compose.yml` enables signup with
+        `DEFAULT_USER_ROLE: "pending"` and keeps no committed secret;
+        (2) `services/sparknet-admin-agent.py` is stdlib-only, `--help` exits 0,
+        and runs relocated; it serves a loopback listener that appends
+        normalised `auth.*`/`user.role_updated` events to a 0600 JSONL spool
+        under `$SPARKNET_STATE_DIR/admin-events/`, and can register the node's
+        own Open WebUI event webhooks via `POST /api/events/webhooks`;
+        (3) the node's WebUI admin is documented as a machine service account
+        (password site-local, 0600), so no human logs in as admin on a peer;
+        (4) `tests/test_admin_agent.py` proves the spool shape, the event
+        allow-list, the webhook registration body, and the pending-only
+        provisioning gate; (5) `manifests/ai-stack.json` records the new
+        approval posture; (6) tests + `make contract-test` + `lint` green,
+        bundle-verify rc=0.
+      - **Status**: in progress, opened 2026-10-12. The signed cross-node route
+        (`admin-supervise` + bridge `/admin/*`) is fabric Step 29 Phase 2, not
+        this step; live deployment is `DoD: confirm: user`.
 
 ## Next
 

@@ -168,14 +168,42 @@ def test_the_bridge_key_is_a_deploy_time_variable_never_a_committed_token():
     assert "sk-" not in key, "a standing bearer token must never be committed"
 
 
-def test_the_first_admin_is_a_deploy_time_variable_never_a_committed_secret():
+def test_the_first_admin_and_signup_are_deploy_time_settings_with_no_committed_secret():
+    """Signup is enabled but approval-mediated; the node's admin is a machine account.
+
+    ADMIN_FEDERATION_DESIGN.md: a peer's WebUI admin is a service account whose
+    password is generated at deploy under the node state dir (0600), read only by
+    the provisioner and the admin agent — so no human logs in as administrator on
+    a peer. New accounts land `pending` and reach nothing until approved.
+    """
     webui = _compose_services()["open-webui"]
     env = webui["environment"]
-    assert env.get("ENABLE_SIGNUP") == "false", "a chat surface must never be self-service"
+    assert env.get("ENABLE_SIGNUP") == "true", (
+        "signup is enabled under the shared admin-federation design; the gate is "
+        "DEFAULT_USER_ROLE=pending, not a disabled signup form"
+    )
+    assert env.get("DEFAULT_USER_ROLE") == "pending", (
+        "new accounts must land pending until an admin accepts them — pending "
+        "confers zero access"
+    )
     assert "${SPARKNET_WEBUI_ADMIN_PASSWORD" in env.get("WEBUI_ADMIN_PASSWORD", ""), (
-        "the first admin password must be a deploy-time variable, never a committed value"
+        "the machine-admin password must be a deploy-time variable, never a committed value"
     )
     assert "${SPARKNET_WEBUI_ADMIN_EMAIL" in env.get("WEBUI_ADMIN_EMAIL", "")
+
+
+def test_the_admin_federation_surface_is_declared_in_the_manifest():
+    manifest = _load(MANIFEST)
+    fed = manifest["admin_federation"]
+    assert "ADMIN_FEDERATION_DESIGN.md" in fed["design"]
+    assert "pending" in fed["signup"]
+    assert "service_account_admin" in fed
+    assert "sparknet-admin-agent.py" in fed["admin_agent"]
+    assert "admin-supervise" in fed["supervise"]
+    webui = _compose_services()["open-webui"]
+    assert webui["environment"].get("AUDIT_LOG_LEVEL") == "METADATA", (
+        "the node's metadata audit log backs the event spool; both recorded"
+    )
 
 
 def test_the_step5_models_are_declared_in_agent_models_json():

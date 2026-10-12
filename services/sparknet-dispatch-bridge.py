@@ -59,9 +59,37 @@ from typing import Any
 STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "DENIED", "ERROR"]
 DEFAULT_PORT = 4096
 DEFAULT_BIND = "127.0.0.1"
-PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/")
+PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/", "/admin/")
+ADMIN_PREFIX = "/admin/"
+ADMIN_REPLAY_TTL_SECONDS = 300
 SESSION_SCHEMA = "sparknet-session/2"
 SHARE_KINDS = ("kb-view", "kb-share", "session-view", "session-handoff", "full")
+
+#: Admin action -> (method, path template) against the node's OWN Open WebUI.
+#: Entity fields come only from the verified signed request. Endpoints follow
+#: Open WebUI 0.12's admin surface (users list/`/{id}/update` for role changes —
+#: promoting a `pending` account is exactly `update` with `role: user`,
+#: knowledge list, per-user chats). The exact chat/knowledge paths get pinned
+#: against the live nodes during fabric Step 29 Phase 5, like every other 0.12
+#: live nuance; any leftover template braces at execution time are a refusal.
+ADMIN_WEBUI_ROUTES: dict[str, tuple[str, str]] = {
+    "list_users": ("GET", "{base}/api/v1/users/"),
+    "get_user": ("GET", "{base}/api/v1/users/{user_id}"),
+    "approve_user": ("POST", "{base}/api/v1/users/{user_id}/update"),
+    "set_user_role": ("POST", "{base}/api/v1/users/{user_id}/update"),
+    "list_knowledge": ("GET", "{base}/api/v1/knowledge/"),
+    "get_user_chats": ("GET", "{base}/api/v1/chats/{user_id}"),
+}
+
+#: Per-action required entity fields, checked before any WebUI call.
+ADMIN_ENTITY_FIELDS: dict[str, tuple[str, ...]] = {
+    "list_users": (),
+    "get_user": ("user_id",),
+    "approve_user": ("user_id",),
+    "set_user_role": ("user_id", "role"),
+    "list_knowledge": (),
+    "get_user_chats": ("user_id",),
+}
 
 # Approvals are recorded through shared/sparknet-provenance.py, never here.
 # This bridge used to carry its own `--test-approval` block builder with a
@@ -154,6 +182,54 @@ def _load_provenance() -> Any:
         "sparknet_provenance_bridge",
         ("sparknet-authz.py", "sparknet-provenance.py"),
     )
+
+
+def _load_admin_agent() -> Any:
+    """The one node admin agent (peer PLAN Step 12), loaded by path.
+
+    The bridge never reimplements the node's WebUI admin client: the signed
+    admin route executes through the same helpers the agent's own loopback
+    spooler uses, so the node's service-account credentials have exactly one
+    reader, and the execution path and the ingest path cannot drift.
+    """
+    path = Path(__file__).resolve().parent / "sparknet-admin-agent.py"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"admin agent missing at {path}; the bridge refuses to reimplement its WebUI client"
+        )
+    if "sparknet_admin_agent_bridge" in sys.modules:
+        return sys.modules["sparknet_admin_agent_bridge"]
+    spec = importlib.util.spec_from_file_location("sparknet_admin_agent_bridge", path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"no importable module at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_guard_replay() -> Any:
+    """The one replay guard, reused from the guard service by path.
+
+    A second replay implementation is exactly the drift the fabric's
+    single-implementation rule exists to prevent: the guard and the admin route
+    must agree about what a replayed or spent request is. Only the module's
+    classes are used; it has no import side effects.
+    """
+    path = Path(__file__).resolve().parent / "sparknet-guard-d.py"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"guard missing at {path}; the bridge refuses to reimplement replay protection"
+        )
+    if "sparknet_guard_bridge" in sys.modules:
+        return sys.modules["sparknet_guard_bridge"]
+    spec = importlib.util.spec_from_file_location("sparknet_guard_bridge", path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"no importable module at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _state_dir(vault_root: Path) -> Path:
@@ -300,6 +376,8 @@ class Bridge:
         self._identity: dict[str, Any] | None = None
         self._regime: Any | None = None
         self._regime_mod: Any | None = None
+        self._replay: Any | None = None
+        self._webui_token: str | None = None
 
     def _share_regime(self) -> Any:
         """The one share-regime engine, built once against this node's state.
@@ -860,6 +938,177 @@ class Bridge:
 
     # -- dispatch ----------------------------------------------------------------
 
+    # -- admin requests (admin-supervise, fabric Step 29 phase 2) -------------
+
+    def _master_public_key(self) -> Any | None:
+        """The Master's public key from this node's manifests (guard path).
+
+        Recomputed per request, never cached: this is the key the guard trusts,
+        and a stale cached key would outlive a re-formed root.
+        """
+        key_path = self.vault_root / "manifests" / "keys" / "master-ed25519.pub.b64"
+        if not key_path.is_file():
+            return None
+        try:
+            return self.authz.load_public_key(key_path)
+        except Exception:
+            return None
+
+    def _authorization_decision(self) -> Any | None:
+        """This node's own authorization per the signed registry, guard order."""
+        key = self._master_public_key()
+        if key is None:
+            return None
+        try:
+            return self.authz.evaluate(self.node_identity(), self.registry(), key, now=self._now())
+        except Exception:
+            return None
+
+    def _admin_replay(self) -> Any:
+        """The one ReplayGuard instance, persisted under the state dir.
+
+        The store lives next to the guard's replay store but is keyed to the
+        admin requests (request_id:nonce), so a replayed admin request dies at
+        the same check an approval does — and survives a bridge restart.
+        """
+        if self._replay is None:
+            self._replay = _load_guard_replay().ReplayGuard(
+                ttl_seconds=ADMIN_REPLAY_TTL_SECONDS,
+                store_path=_state_dir(self.vault_root) / "admin-replay.json",
+            )
+        return self._replay
+
+    def _webui_conn(self) -> tuple[str, str]:
+        """(base, service-account token) for the node's own Open WebUI.
+
+        The token is minted by signing into the node's own admin service
+        account (peer PLAN Step 12) and cached per process: the account exists
+        so no human signs in, and per-request sign-ins would spam the event
+        spool with `auth.login` noise. The token never leaves the node.
+        """
+        base = os.environ.get("SPARKNET_WEBUI") or "http://127.0.0.1:8181"
+        email = os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL") or "admin@sparknet.local"
+        pw_file = Path(
+            os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
+            or "~/.local/state/sparknet/cluster2/webui-admin-password"
+        ).expanduser()
+        if self._webui_token is None:
+            agent = _load_admin_agent()
+            self._webui_token = agent.webui_token(base, email, agent.load_admin_password(pw_file))
+        return base, self._webui_token
+
+    def _build_admin_url(self, action: str, request: dict[str, Any]) -> tuple[str, str]:
+        """Resolve (method, url) for an action against the peer's own WebUI.
+
+        Only fields named by the whitelist may enter the URL; a template that
+        would leave an unfilled brace is a refusal, never a guess.
+        """
+        if action not in ADMIN_WEBUI_ROUTES or action not in ADMIN_ENTITY_FIELDS:
+            raise _HttpRequestError(404, "unknown-action", f"no local execution for admin action {action!r}")
+        method, template = ADMIN_WEBUI_ROUTES[action]
+        missing = [f for f in ADMIN_ENTITY_FIELDS[action] if not request.get(f)]
+        if missing:
+            raise _HttpRequestError(
+                400, "missing-field", f"admin action {action} requires {', '.join(missing)}"
+            )
+        base, _token = self._webui_conn()
+        try:
+            url = template.format(base=base, **{f: str(request[f]) for f in ADMIN_ENTITY_FIELDS[action]})
+        except KeyError as exc:
+            raise _HttpRequestError(400, "missing-field", f"admin action {action} left a template field blank") from exc
+        if "{" in url or "}" in url:
+            raise _HttpRequestError(400, "missing-field", f"admin action {action} resolved with an unfilled field")
+        return method, url
+
+    def handle_admin(self, method: str, path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """Execute one signed admin request. Guard-protocol order throughout:
+
+        1. transport shape; 2. Master signature over the canonical projection;
+        3. this node's own authorization still holds; 4. the request is bound
+        to this node; 5. ``admin-supervise`` is granted to this node — until
+        the real registry carries it, every request dies here as
+        ``capability_missing`` and the route stays inert; 6. replay/expiry;
+        7. closed action + entity whitelist, then execute against the node's
+        own WebUI with the node's own token.
+        """
+        action = path[len(ADMIN_PREFIX) :].strip("/")
+        if not action:
+            raise _HttpRequestError(404, "unknown-path", f"{method} /admin/")
+        if method != "POST":
+            raise _HttpRequestError(405, "method-not-allowed", "admin requests are POSTed")
+        if not isinstance(body, dict):
+            raise _HttpRequestError(400, "malformed-request", "admin request body must be a JSON object")
+        signature_b64 = body.get("signature_b64")
+        if not isinstance(signature_b64, str) or not signature_b64:
+            raise _HttpRequestError(400, "malformed-request", "admin request carries no signature_b64")
+        unsigned = {k: v for k, v in body.items() if k != "signature_b64"}
+        try:
+            message = self.authz.admin_request_message(unsigned)
+        except Exception as exc:
+            raise _HttpRequestError(400, "not-canonicalisable", str(exc))
+        if unsigned.get("action") != action:
+            raise _HttpRequestError(
+                400,
+                "action-mismatch",
+                f"path names /admin/{action} but the signed body names {unsigned.get('action')!r}",
+            )
+
+        master_key = self._master_public_key()
+        if master_key is None:
+            raise _HttpRequestError(503, "no-master-key", "no Master public key is loaded on this node")
+        if not self.authz.verify_signature(master_key, signature_b64, message):
+            raise _HttpRequestError(403, "bad-signature", "signature does not verify against the Master key")
+
+        decision = self._authorization_decision()
+        if decision is None or not decision.allowed:
+            raise _HttpRequestError(
+                403,
+                decision.reason if decision is not None else "no-authorization",
+                "this node is not authorised by the registry",
+            )
+        identity = self.node_identity()
+        if str(unsigned.get("target_node_id") or "") != str(identity.get("node_id") or ""):
+            raise _HttpRequestError(403, "wrong-target", "admin request is not addressed to this node")
+        if str(unsigned.get("target_fingerprint") or "") != str(decision.fingerprint):
+            raise _HttpRequestError(403, "wrong-target", "admin request targets a different node fingerprint")
+        if "admin-supervise" not in decision.capabilities:
+            raise _HttpRequestError(
+                403,
+                "capability_missing",
+                f"admin-supervise not granted to this node (have: {', '.join(decision.capabilities) or 'none'})",
+            )
+
+        guard_mod = _load_guard_replay()
+        try:
+            self._admin_replay().check(
+                str(unsigned.get("nonce") or ""),
+                str(unsigned.get("request_id") or ""),
+                str(unsigned.get("issued_at") or ""),
+                str(unsigned.get("expires_at") or ""),
+                now=self._now(),
+            )
+        except guard_mod.Refusal as exc:  # noqa: BLE001 - the guard's refusal IS the contract
+            raise _HttpRequestError(exc.status, exc.code, exc.detail)
+
+        method_exec, url = self._build_admin_url(action, unsigned)
+        webui_body: dict[str, Any] | None = None
+        if action == "approve_user":
+            webui_body = {"role": "user"}
+        elif action == "set_user_role":
+            webui_body = {"role": str(unsigned.get("role") or "")}
+        base, token = self._webui_conn()
+        agent = _load_admin_agent()
+        webui_status, result = agent.admin_api_call(url, method_exec, token, webui_body)
+        if webui_status >= 400:
+            return webui_status, {
+                "ok": False,
+                "action": action,
+                "reason": "webui-refused",
+                "webui_status": webui_status,
+                "detail": result,
+            }
+        return 200, {"ok": True, "action": action, "webui_status": webui_status, "result": result}
+
     def handle(
         self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any], grant: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
@@ -963,12 +1212,16 @@ def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) ->
         def _plain(self, method: str, body: dict[str, Any]) -> None:
             try:
                 self._loopback_guard()
+                path, _, raw_query = self.path.partition("?")
+                if path.startswith(ADMIN_PREFIX):
+                    code, payload = bridge.handle_admin(method, path, body)
+                    self._send(code, payload)
+                    return
                 auth = self.headers.get("Authorization", "")
                 if not auth.startswith("Bearer "):
                     raise _HttpRequestError(401, "missing-grant", "Authorization: Bearer <grant> is required")
                 grant = bridge.decode_grant(auth[len("Bearer ") :].strip())
                 bridge.verify_grant(grant, allow_spent_nonce=bridge.session_allows_reuse(grant))
-                path, _, raw_query = self.path.partition("?")
                 query = urllib.parse.parse_qs(raw_query)
                 code, payload = bridge.handle(method, path, query, body, grant)
             except _HttpRequestError as exc:

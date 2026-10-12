@@ -19,7 +19,7 @@ PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),python3)
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
         peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture clean \
         provenance-verify user-init provenance-append ingest precommit shims-check keys-check \
-        ai-stack-config container-build container-load container-config container-preflight container-up \
+        ai-stack-config admin-agent-help container-build container-load container-config container-preflight container-up \
         container-health container-down model-generate model-verify model-build model-serve
 
 help: ## Show this help
@@ -238,6 +238,9 @@ election-request: ## run this node's part of the election (URL= CANDIDATE= NODE_
 
 ai-stack-config: ## Validate the node AI stack compose parses (no images pulled)
 	@docker compose -f "$(VAULT_ROOT)/configs/ai-stack/docker-compose.yml" config --quiet
+
+admin-agent-help: ## Admin agent --help / --serve (peer PLAN Step 12; no-op without --serve)
+	@$(PY) "$(VAULT_ROOT)/services/sparknet-admin-agent.py" --help
 
 # --- node container (peer PLAN Step 2) ----------------------------------------
 #
