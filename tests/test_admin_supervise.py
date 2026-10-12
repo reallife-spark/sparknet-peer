@@ -469,3 +469,60 @@ def test_the_webui_refusal_is_surfaced_verbatim(server, ctx, master_key, grant_r
     assert payload["reason"] == "webui-refused"
     assert payload["webui_status"] == 403
     assert payload["detail"] == {"detail": "that role is not assignable here"}
+
+
+# --- the event feed (list_events) --------------------------------------------
+
+
+def _spool(ctx: dict, rows: list[dict]) -> None:
+    """Write the node's auth-event spool where the bridge reads it."""
+    spool = bridge_mod._state_dir(ctx["vault"]) / "admin-events" / "events.jsonl"
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    spool.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
+
+
+def test_list_events_reads_the_node_own_spool(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry", "admin-supervise"])
+    _spool(ctx, [
+        {"event": "auth.signup", "ts": "t1", "actor": "ana@example.test", "node": "n"},
+        {"event": "auth.login", "ts": "t2", "actor": "ana@example.test", "node": "n"},
+    ])
+    body = _admin_request(master_key, action="list_events", **_target(ctx))
+    status, payload = server.post("/admin/list_events", body)
+    assert status == 200, payload
+    assert payload["ok"] is True
+    assert payload["action"] == "list_events"
+    assert [e["event"] for e in payload["events"]] == ["auth.signup", "auth.login"]
+    assert payload["count"] == 2 and payload["truncated"] is False
+
+
+def test_list_events_on_an_empty_node_is_an_empty_feed_not_an_error(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry", "admin-supervise"])
+    body = _admin_request(master_key, action="list_events", **_target(ctx))
+    status, payload = server.post("/admin/list_events", body)
+    assert status == 200, payload
+    assert payload["events"] == [] and payload["count"] == 0
+
+
+def test_list_events_needs_the_capability_like_any_other_action(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry"])
+    body = _admin_request(master_key, action="list_events", **_target(ctx))
+    status, payload = server.post("/admin/list_events", body)
+    assert status == 403
+    assert payload["reason"] == "capability_missing"
+
+
+def test_list_events_skips_corrupt_rows_and_caps_the_response(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry", "admin-supervise"])
+    good = [{"event": "auth.login", "ts": f"t{i}", "actor": "a@b.test", "node": "n"}
+            for i in range(bridge_mod.ADMIN_EVENTS_MAX + 3)]
+    spool = bridge_mod._state_dir(ctx["vault"]) / "admin-events" / "events.jsonl"
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    spool.write_text("not json\n" + "".join(json.dumps(r) + "\n" for r in good), encoding="utf-8")
+    body = _admin_request(master_key, action="list_events", **_target(ctx))
+    status, payload = server.post("/admin/list_events", body)
+    assert status == 200, payload
+    assert payload["count"] == bridge_mod.ADMIN_EVENTS_MAX
+    assert payload["total"] == bridge_mod.ADMIN_EVENTS_MAX + 3
+    assert payload["truncated"] is True
+    assert payload["events"][-1]["ts"] == good[-1]["ts"]

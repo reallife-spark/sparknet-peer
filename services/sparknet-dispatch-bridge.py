@@ -89,7 +89,19 @@ ADMIN_ENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     "set_user_role": ("user_id", "role"),
     "list_knowledge": (),
     "get_user_chats": ("user_id",),
+    "list_events": (),
 }
+
+#: Admin actions answered from a node-local file rather than a WebUI call. The
+#: event feed is the node's own auth-event spool (the 0600 JSONL the admin agent
+#: writes), so it needs no service-account token — which is the point: the Master
+#: can see signups and successful logins without the node granting anything else.
+ADMIN_LOCAL_ACTIONS = frozenset({"list_events"})
+
+#: Hard cap on how many spool rows one list_events response carries. The spool is
+#: append-only and grows forever; a signed read is bounded so a single request
+#: cannot be turned into an unbounded response. The console de-duplicates.
+ADMIN_EVENTS_MAX = 500
 
 # Approvals are recorded through shared/sparknet-provenance.py, never here.
 # This bridge used to carry its own `--test-approval` block builder with a
@@ -997,6 +1009,43 @@ class Bridge:
             self._webui_token = agent.webui_token(base, email, agent.load_admin_password(pw_file))
         return base, self._webui_token
 
+    def _read_admin_events(self) -> dict[str, Any]:
+        """Return this node's auth-event spool, newest ``ADMIN_EVENTS_MAX`` rows.
+
+        The spool is the same 0600 JSONL ``sparknet-admin-agent.py`` writes; the
+        Master's console reads it through the signed route so the feed needs no
+        shared database and no peer WebUI credential handed out. An absent spool
+        is an empty feed, not an error — a node with no signups yet has nothing
+        to report and that is not a failure. Corrupt rows are skipped, exactly as
+        the agent's own reader does, so one bad line cannot blind the console.
+        """
+        path = _state_dir(self.vault_root) / "admin-events" / "events.jsonl"
+        events: list[dict[str, Any]] = []
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    events.append(row)
+        total = len(events)
+        truncated = total > ADMIN_EVENTS_MAX
+        if truncated:
+            events = events[-ADMIN_EVENTS_MAX:]
+        return {
+            "ok": True,
+            "action": "list_events",
+            "events": events,
+            "count": len(events),
+            "total": total,
+            "truncated": truncated,
+            "spool": str(path),
+        }
+
     def _build_admin_url(self, action: str, request: dict[str, Any]) -> tuple[str, str]:
         """Resolve (method, url) for an action against the peer's own WebUI.
 
@@ -1089,6 +1138,11 @@ class Bridge:
             )
         except guard_mod.Refusal as exc:  # noqa: BLE001 - the guard's refusal IS the contract
             raise _HttpRequestError(exc.status, exc.code, exc.detail)
+
+        # Node-local actions are answered here, before any WebUI call: the event
+        # feed reads the node's own spool and needs no service-account token.
+        if action in ADMIN_LOCAL_ACTIONS:
+            return 200, self._read_admin_events()
 
         method_exec, url = self._build_admin_url(action, unsigned)
         webui_body: dict[str, Any] | None = None
