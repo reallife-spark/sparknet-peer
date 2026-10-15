@@ -339,7 +339,10 @@ def test_write_in_scope_lands_with_full_provenance(ctx):
     assert data["nonce"] == "nonce-0001"
     assert data["note_refs"] == ["05_Knowledge/concepts/grant-note.md"]
     assert set(data["signatures"]) == {"user", "node"}
-    assert block["signature"] == data["signatures"]["node"]
+    node_pub = authz.public_key_from_b64(block["node_pubkey_b64"])
+    assert authz.verify_signature(node_pub, block["signature"], prov.block_header_signable(block)), (
+        "the block header signature must verify against the block's own node key"
+    )
 
 
 def test_write_child_session_attribution_is_finer_than_authority(ctx):

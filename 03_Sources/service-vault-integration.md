@@ -15,16 +15,18 @@ tracking:
   approvals: []
   signature:
     alg: ed25519
-    sig: TE42m+rGU14Eh8nfGLZ44lVVq0S4s1eRWFK0PwybymZSXKokTXRKExSRQCsC0PJgfGvdY3Gh1X9avY8CL5VYAA==
+    note_version: sparknet-note/2
+    sig: h7IVreBGbNFBuWefzy49AOTqO8eGNPKlGRNusQjt071/UNWEHJshv0dgaPSrT2OU8o4K0RLWn7CRGnUlqUUNBg==
     key_id: U-27689
     key_fingerprint: sha256:b4321f7ae5e41618306a4cc1e5f101771a8dc6032d6b7ac426702bb960af078e
     signed_body_sha256: ef2f1f358d5213ebe0fb036579a21f2e63b24b9205be21ef74da3124f91e26ec
     signed_meta_sha256: 6e2a556630aecad1d263a70e84b8eeaf2cd22731a3b303ce9f5f200c2097582a
     signed_tracking_sha256: baeb5e290d3300ec5c8c3d955eb7fbc4b6d0a1228b627f1e4e699502579ad0b5
+    signed_conversation_root: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     signed_meta:
       title: "Service/Vault Integration: Path/VEnv/Vault-Agnostic Design"
       updated: 2026-10-06
-    signed_at: 2026-10-06T10:52:47.930377Z
+    signed_at: 2026-10-13T02:14:36.412376Z
 ---
 # Service/Vault Integration: Path/VEnv/Vault-Agnostic Design
 

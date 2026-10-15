@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
-  "description": "Hash-chained permissioned approval ledger (append-only)",
-  "required": ["block_id", "prev_hash", "timestamp", "signature", "data"]
+  "schema_version": "2.0",
+  "description": "Hash-chained permissioned approval ledger (append-only). Every block header is signed by the appending node's identity key; the schema is normative for both roles.",
+  "required": ["block_id", "prev_hash", "timestamp", "node_pubkey_b64", "signature", "data"]
 }

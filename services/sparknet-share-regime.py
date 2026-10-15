@@ -21,6 +21,13 @@ legs. The engine's job is to be *right about the rules*; the host's job is to
 obey the actions it returns (``teardown-stanza``, ``isolate-data-plane``,
 ``re-evaluate``).
 
+The same ports also carry the **proposal exchange** (``contracts/proposal-schema.json``
+``transport``): a sibling message family (``proposal.submit`` / ``proposal.review``
+/ ``proposal.decide``) that is *not* a share type. The engine recognises the
+family — ``accepts_message`` and ``proposal_route`` — and reads the family and
+its ports from the proposal contract, so a missing contract refuses construction
+rather than letting the route be guessed.
+
 A share is not an authority transfer (share-protocol.md "What a share is").
 Authority comes from the Master's Ed25519 key and the signed grant envelope,
 never from being talked to; this module holds no key material at all.
@@ -201,11 +208,23 @@ class Regime:
         caps = _load("capabilities", contracts)
         overlay = _load("overlay", contracts)
         ports = _load("ports", contracts)
+        # The proposal exchange rides these ports; loading the contract here means
+        # a missing proposal-schema.json refuses construction instead of letting
+        # the route be invented (contracts/proposal-schema.json `transport`).
+        proposal_schema = _load("proposal-schema", contracts)
         try:
             self.share_types: dict[str, dict] = caps["share_types"]["types"]
             clocks: dict[str, dict] = caps["share_clocks"]["clocks"]
         except (KeyError, TypeError) as exc:
             raise ShareError(500, "contract-malformed", str(exc))
+        try:
+            transport = proposal_schema["transport"]
+            self.proposal_message_types: tuple[str, ...] = tuple(transport["message_types"])
+            self.proposal_ports: tuple[int, ...] = tuple(int(p) for p in transport["ports"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ShareError(500, "contract-malformed", f"proposal-schema transport: {exc}")
+        if not self.proposal_message_types or not self.proposal_ports:
+            raise ShareError(500, "contract-malformed", "proposal transport names no route")
         self.durations = durations or {name: _parse_duration(info["duration"]) for name, info in clocks.items()}
         self.governance_modes: dict[str, dict] = overlay["governance_mode"]["modes"]
         self.master_anchor: str = overlay["master_anchor_ipv4"]
@@ -253,6 +272,29 @@ class Regime:
         if kind in ("session-view", "session-handoff", "full"):
             return 4202
         raise ShareError(400, "unknown-kind", kind)
+
+    def accepts_message(self, msg_type: str) -> bool:
+        """Whether this node's share stanza knows the message family.
+
+        Two families share the ports: ``share.*`` (the proposal is unrelated to
+        the share state machine) and the proposal exchange ``proposal.*`` read
+        from ``contracts/proposal-schema.json``. A message in neither family is
+        not something this engine routes.
+        """
+        if isinstance(msg_type, str) and msg_type.startswith("share."):
+            return True
+        return msg_type in self.proposal_message_types
+
+    def proposal_route(self, msg_type: str) -> int:
+        """The port a proposal-exchange message travels on (proposal-schema.json).
+
+        A proposal is not a share *type*, so it is not routed by ``kind``; it has
+        its own message family and the ports the contract names for it. An
+        unknown ``msg_type`` is refused rather than defaulted to a port.
+        """
+        if msg_type not in self.proposal_message_types:
+            raise ShareError(400, "unknown-message", f"{msg_type!r} is not a proposal exchange message")
+        return self.proposal_ports[0]
 
     def _narrowing(self, offered: str, chosen: str) -> bool:
         """A receiver may always accept a narrower type, never a wider one

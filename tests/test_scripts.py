@@ -342,11 +342,20 @@ def test_approvals_are_appended_through_the_shared_tool(tmp_path: Path) -> None:
     blocks = json.loads((root / "blockchain" / "ledger.json").read_text())["blocks"]
     assert len(blocks) == 2
     for index, block in enumerate(blocks):
-        assert set(block) == {"block_id", "prev_hash", "timestamp", "signature", "data", "hash"}, (
-            f"block {index} is not the canonical shape: {sorted(block)}"
-        )
+        assert set(block) == {
+            "block_id",
+            "prev_hash",
+            "timestamp",
+            "node_pubkey_b64",
+            "signature",
+            "data",
+            "hash",
+        }, f"block {index} is not the canonical shape: {sorted(block)}"
         assert block["block_id"] == f"{index:08d}"
-        assert block["signature"] == block["data"]["signatures"]["node"]
+        # The block signature covers the signed header, not a restatement of the
+        # node countersignature; the CLI `verify` below proves it cryptographically.
+        assert block["signature"] and block["signature"] != block["data"]["signatures"]["node"]
+        assert block["node_pubkey_b64"]
         assert block["prev_hash"] == (blocks[index - 1]["hash"] if index else "")
         # The shape the deleted flag invented must not reappear anywhere.
         assert not {"index", "payload", "block_hash"} & set(block)

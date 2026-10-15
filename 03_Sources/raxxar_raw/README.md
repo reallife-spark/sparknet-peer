@@ -15,16 +15,18 @@ tracking:
   approvals: []
   signature:
     alg: ed25519
-    sig: i1/jKlyhDmv3A6JiqLasYfmOZqBY6BMZzaP63xuUnHIWmUpdooBfAul7XWiy5MsqpzFm9SSdeFbEs437LbGtBg==
+    note_version: sparknet-note/2
+    sig: hI33xVVNoCko3lu0TDNjw0BIH7CGseP5mPUpyotOyOBGr6quzee0Q0GEF6vs2p9GEqJyF3R774mVov3do6lrCA==
     key_id: U-27689
     key_fingerprint: sha256:b4321f7ae5e41618306a4cc1e5f101771a8dc6032d6b7ac426702bb960af078e
     signed_body_sha256: 6bae5fcc5e728810bc724d51e138e1ff347ce283851c9543920018e527ccfe47
     signed_meta_sha256: 7b47426468b738dbef46f4f966bdea8542a19f6e0464e44e26490b12ae184250
     signed_tracking_sha256: baeb5e290d3300ec5c8c3d955eb7fbc4b6d0a1228b627f1e4e699502579ad0b5
+    signed_conversation_root: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     signed_meta:
       title: Raxxar Raw DGX/Sparknet Context
       updated: 2026-10-06
-    signed_at: 2026-10-06T10:52:47.924094Z
+    signed_at: 2026-10-13T02:14:36.214182Z
 ---
 # Raxxar Raw DGX/Sparknet Context
 

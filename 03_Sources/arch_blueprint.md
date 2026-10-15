@@ -25,12 +25,14 @@ tracking:
   approvals: []
   signature:
     alg: ed25519
-    sig: IdEcHxmlfQuCv6Pw4ShoIJC/LqV5CKUXu+Vsyg/u7bb+vqM/LreQjse5nZ/41tpC4EvzpGCWNWDfGqCS1F0GCQ==
+    note_version: sparknet-note/2
+    sig: 4H/kjMAQAvCpA+LKRNzUiSE1sGYEkut+PWTmSSjwlQs4l3QvAurdIGYtw/Ri/5tDvtaGdoj/JL7Mmg+5/QzfDw==
     key_id: U-27689
     key_fingerprint: sha256:b4321f7ae5e41618306a4cc1e5f101771a8dc6032d6b7ac426702bb960af078e
     signed_body_sha256: c76456ea8ba7819400dcc34ac8cbc6827f057f3c0ae489aa3e0d49b4f89be668
     signed_meta_sha256: 8502e6851d4481d13c163ee657bb7d434d490dcfd9211e314d5de59034eeb6f1
     signed_tracking_sha256: baeb5e290d3300ec5c8c3d955eb7fbc4b6d0a1228b627f1e4e699502579ad0b5
+    signed_conversation_root: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     signed_meta:
       title: Gemini Sparknet Session (verbatim transcript)
       type: source-transcript
@@ -44,7 +46,7 @@ tracking:
       summary: "Complete verbatim transcript of a 37-turn Gemini session designing 'Sparknet', a multi-department local-AI architecture for NVIDIA DGX Spark clusters. Preserved unedited as an immutable source capture."
       lifecycle: draft
       tier: reference
-    signed_at: 2026-10-06T10:52:47.920661Z
+    signed_at: 2026-10-13T02:14:36.621133Z
 ---
 
 # Gemini Sparknet Session — verbatim transcript
