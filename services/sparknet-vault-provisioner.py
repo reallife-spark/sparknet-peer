@@ -27,9 +27,18 @@ For each new account it:
   5. defaults the user's own chat model to the KB (`meta.knowledge`), and
   6. records the provisioning state under `/srv/sparknet/knowledge/.state/`.
 
-A content-digest pass re-embeds changed/added pages on later polls, so the KB
-follows what the user writes into their vault ("customized to the knowledge they
-add").
+A content-digest pass adds pages the user later writes into their vault, so the
+KB follows what they add ("customized to the knowledge they add"). Pages are
+matched by basename and already-present ones are reused, so re-indexing never
+piles up duplicate rows; the accepted trade-off is that editing an existing
+page in place does not re-embed it.
+
+A pass is **resumable**. If it is interrupted after the vault is materialised
+but before the record reaches `done`, the next poll reuses the existing vault
+and its recorded KB id and skips pages already in the KB, instead of refusing
+on "destination exists" and skipping that user forever. A user deleted from the
+WebUI has its record marked `orphaned` (folder, KB and model left in place)
+rather than retried each poll.
 
 The `master-<id>` copy rule exists but is **inactive**: it provisions a
 `master-<id>` vault only when the node is elected Master AND its WebUI admin is
@@ -391,15 +400,33 @@ def create_kb(base: str, token: str, name: str, user_id: str) -> str:
     return resp["id"]
 
 
-def embed_vault_into_kb(base: str, token: str, kb_id: str, vault: Path, progress: Any = None) -> list[tuple[Path, str]]:
-    """Upload each markdown page and attach it to the KB.
+def embed_vault_into_kb(
+    base: str,
+    token: str,
+    kb_id: str,
+    vault: Path,
+    progress: Any = None,
+    existing: dict[str, str] | None = None,
+) -> list[tuple[Path, str]]:
+    """Attach each vault page to the KB, uploading only pages not already there.
 
-    Returns ``(vault-relative path, file id)`` pairs so the caller can file each
-    page into its numbered knowledge directory afterwards.
+    Returns ``(vault-relative path, file id)`` pairs for **every** vault page —
+    newly uploaded and already-present alike — so the caller can file each page
+    into its numbered knowledge directory. ``existing`` maps a page basename to
+    its file id in the KB (WebUI flattens files to basename); a page already
+    present is reused rather than uploaded a second time, which is what makes a
+    resumed or re-indexed pass idempotent instead of piling up duplicate rows.
     """
+    present = existing or {}
     added: list[tuple[Path, str]] = []
     for page in _vault_pages(vault):
         rel = page.relative_to(vault)
+        file_id = present.get(page.name)
+        if file_id:
+            added.append((rel, file_id))
+            if progress:
+                progress(f"present {rel}")
+            continue
         try:
             file_id = _upload_and_embed(f"{base}", token, page)
         except Exception as e:
@@ -424,6 +451,39 @@ def list_knowledge_directories(base: str, token: str, kb_id: str) -> dict[str, s
         raise Refusal(f"knowledge dir list failed: HTTP {status}")
     dirs = body.get("directories") or []
     return {d["name"]: d["id"] for d in dirs if isinstance(d, dict) and "name" in d}
+
+
+def existing_kb_files(base: str, token: str, kb_id: str) -> dict[str, str]:
+    """The KB's attached files as a ``basename -> file id`` map.
+
+    Open WebUI flattens a file to its basename, so matching on the basename is
+    how the embed pass tells "already here" from "new". Best-effort: an
+    unexpected response shape yields an empty map so provisioning still runs
+    (it would then simply re-add, no worse than before this helper existed).
+    """
+    status, body = _http_json(f"{base}/api/v1/knowledge/{kb_id}/files", "GET", token)
+    if status != 200 or not isinstance(body, dict):
+        return {}
+    present: dict[str, str] = {}
+    for f in body.get("files") or []:
+        if not isinstance(f, dict):
+            continue
+        name = f.get("name")
+        file_id = f.get("id") or f.get("file_id")
+        if name and file_id:
+            present[name] = file_id
+    return present
+
+
+def kb_exists(base: str, token: str, kb_id: str) -> bool:
+    """Whether a knowledge base id still exists in the WebUI.
+
+    A recorded ``kb_id`` can outlive the KB itself (the KB was deleted, or the
+    WebUI database was reset). Reusing a dead id makes every ``file/add`` fail
+    with HTTP 400, so a resumed pass checks first and mints a fresh KB instead.
+    """
+    status, _ = _http_json(f"{base}/api/v1/knowledge/{kb_id}/files", "GET", token)
+    return status == 200
 
 
 def create_knowledge_directory(base: str, token: str, kb_id: str, name: str) -> str:
@@ -500,7 +560,17 @@ def provision_user(
     base_model: str = "plan",
     progress: Any = None,
 ) -> dict:
-    """Provision a peer- vault + KB + default model for one approved user."""
+    """Provision a peer- vault + KB + default model for one approved user.
+
+    Resumable and idempotent. A pass that failed after the vault was
+    materialised but before the record reached ``done`` (the folder exists,
+    ``stage`` is ``embed``) continues instead of restarting: the existing vault
+    is reused rather than refused, the recorded ``kb_id`` is reused instead of
+    creating a second KB (unless the recorded KB has since been deleted, in
+    which case a fresh one is minted), and pages already in the KB are not
+    re-uploaded. This is what stops a user — an admin in practice — whose first
+    pass was interrupted from being skipped in a loop forever.
+    """
     user_id = user.get("id")
     if not user_id:
         raise Refusal("user record has no id")
@@ -521,24 +591,39 @@ def provision_user(
         "vault_path": str(vault),
         "updated_at": int(time.time()),
     }
-
-    if progress:
-        progress(f"materialising {vault}")
-    materialise_vault_slice(template, vault)
-    env_file = write_vault_env(vault)
-    if progress:
-        progress(f"wrote {env_file}")
+    if rec and rec.get("kb_id"):
+        staged["kb_id"] = rec["kb_id"]
 
     try:
+        if vault.exists():
+            if progress:
+                progress(f"reusing existing vault {vault}")
+        else:
+            if progress:
+                progress(f"materialising {vault}")
+            materialise_vault_slice(template, vault)
+        env_file = write_vault_env(vault)
         if progress:
-            progress("creating KB")
-        kb_id = create_kb(base, token, f"peer-{slug}", user_id)
-        staged["kb_id"] = kb_id
+            progress(f"wrote {env_file}")
+
+        kb_id = staged.get("kb_id")
+        if kb_id and not kb_exists(base, token, kb_id):
+            if progress:
+                progress(f"recorded KB {kb_id} no longer exists; creating a new one")
+            kb_id = None
+            staged.pop("kb_id", None)
+        if not kb_id:
+            if progress:
+                progress("creating KB")
+            kb_id = create_kb(base, token, f"peer-{slug}", user_id)
+            staged["kb_id"] = kb_id
         staged["stage"] = "embed"
 
         if progress:
             progress("embedding vault pages")
-        added = embed_vault_into_kb(base, token, kb_id, vault, progress=progress)
+        added = embed_vault_into_kb(
+            base, token, kb_id, vault, progress=progress, existing=existing_kb_files(base, token, kb_id)
+        )
         staged["files"] = len(added)
         staged["digest"] = _content_digest(vault)
 
@@ -565,13 +650,48 @@ def _slug(user_id: str) -> str:
 
 
 def reindex_user(base: str, token: str, vault: Path, kb_id: str, progress: Any = None) -> bool:
-    """Re-embed changed/added pages for an existing provisioned user."""
+    """Re-embed a provisioned user's vault, adding only pages not already in the KB.
+
+    Pages already present (matched by basename) are reused, not re-uploaded, so
+    re-indexing never piles up duplicate rows. The known limitation, accepted
+    for now: a page edited in place keeps its basename, so it is **not**
+    re-embedded — only genuinely new pages are added. The digest gate in
+    ``run_watch`` still decides when this pass runs at all.
+    """
     digest = _content_digest(vault)
     if progress:
         progress(f"re-index scan digest={digest[:12]}")
-    added = embed_vault_into_kb(base, token, kb_id, vault, progress=progress)
+    added = embed_vault_into_kb(
+        base, token, kb_id, vault, progress=progress, existing=existing_kb_files(base, token, kb_id)
+    )
     organize_into_directories(base, token, kb_id, added, progress=progress)
     return bool(added)
+
+
+def _prune_vanished_users(knowledge_root: Path, users: list[dict]) -> list[str]:
+    """Mark records for users the WebUI no longer has as ``orphaned``.
+
+    Non-destructive: the vault copy, KB and model are left where they are, and
+    the record stays visible in the state file (with ``orphaned_at``) so an
+    operator can see what was left behind. Refuses to act on an empty user list
+    — a transient empty read must never mass-orphan every user. Returns the
+    ids marked orphaned this pass.
+    """
+    live = {u.get("id") for u in users if u.get("id")}
+    if not live:
+        return []
+    state = _load_state(knowledge_root)
+    orphaned: list[str] = []
+    for uid, rec in state.items():
+        if not rec or rec.get("stage") == "orphaned" or uid in live:
+            continue
+        rec["stage"] = "orphaned"
+        rec["orphaned_at"] = int(time.time())
+        orphaned.append(uid)
+        log(f"user {uid} no longer exists; record marked orphaned (vault/KB/model left in place)")
+    if orphaned:
+        _save_state(knowledge_root, state)
+    return orphaned
 
 
 def run_watch(
@@ -591,6 +711,8 @@ def run_watch(
         try:
             token = webui_token(base, email, password)
             users = fetch_users(base, token)
+            _prune_vanished_users(knowledge_root, users)
+            state = _load_state(knowledge_root)
             for user in users:
                 role = user.get("role")
                 if role not in ("user", "admin"):

@@ -76,6 +76,56 @@ def import_source():
     return mod
 
 
+class FakeWebUI:
+    """A recording stand-in for the WebUI admin API the provisioner calls.
+
+    Enough of the surface for ``provision_user``: KB create, KB files list,
+    file add, dir create/move, model create. ``kb_files`` is what the KB
+    already holds, so a test can prove a page is reused and not re-uploaded.
+    """
+
+    def __init__(self, kb_files: list[dict] | None = None, missing_kbs: set[str] | None = None) -> None:
+        self.calls: list[tuple[str, str, object]] = []
+        self.kb_files = kb_files or []
+        self.missing_kbs = missing_kbs or set()
+        self.kb_id = "kb-created"
+
+    def http(self, url: str, method: str, token: str | None, body: object = None):
+        self.calls.append((method, url, body))
+        if method == "GET" and url.endswith("/files"):
+            kb_id = url.split("/knowledge/", 1)[1].rsplit("/files", 1)[0]
+            if kb_id in self.missing_kbs:
+                return 400, {"detail": "We could not find what you're looking for :/"}
+            return 200, {"files": list(self.kb_files), "directories": []}
+        if url.endswith("/api/v1/knowledge/create"):
+            return 200, {"id": self.kb_id}
+        if url.endswith("/file/add"):
+            return 200, {"id": "ok"}
+        if url.endswith("/dirs/create"):
+            return 200, {"id": f"dir-{body['name']}"}
+        if url.endswith("/file/move"):
+            return 200, {}
+        if url.endswith("/api/v1/models/create"):
+            return 200, {"id": body["id"]}
+        return 200, {}
+
+
+def _stub_http(mod, fake: FakeWebUI) -> None:
+    mod._http_json = fake.http
+
+
+def _stub_upload(mod) -> list[str]:
+    """Replace the file upload with a recorder; return the list it appends to."""
+    uploads: list[str] = []
+
+    def record(base, token, page):
+        uploads.append(page.name)
+        return f"fid-{page.name}"
+
+    mod._upload_and_embed = record
+    return uploads
+
+
 def test_help_exits_zero_and_does_nothing(tmp_path: Path) -> None:
     proc = _run(["--help"])
     assert proc.returncode == 0
@@ -235,3 +285,142 @@ def test_fetch_users_still_accepts_a_bare_list() -> None:
         assert mod.fetch_users("http://x", "tok") == [{"id": "u1"}]
     finally:
         mod._http_json = orig
+
+
+def test_existing_kb_files_maps_basename_to_id() -> None:
+    mod = import_source()
+
+    def _http_json(url, method, token, body=None):
+        return 200, {
+            "files": [{"name": "a.md", "id": "1"}, {"name": "b.md", "file_id": "2"}, {"name": "nameless"}],
+            "directories": [],
+        }
+
+    orig = mod._http_json
+    mod._http_json = _http_json
+    try:
+        assert mod.existing_kb_files("http://x", "t", "kb") == {"a.md": "1", "b.md": "2"}
+    finally:
+        mod._http_json = orig
+
+
+def test_provision_user_resumes_when_the_vault_already_exists(tmp_path: Path) -> None:
+    """An interrupted pass (folder present, stage != done) must continue, not refuse."""
+    root = tmp_path / "knowledge"
+    vault = root / "peer-uid1"
+    mod = import_source()
+    mod.materialise_vault_slice(TEMPLATE, vault)
+    mod._save_state(root, {"uid1": {"stage": "embed", "kb_id": "kb-existing", "vault_path": str(vault)}})
+
+    def _no_materialise(*a, **k):  # pragma: no cover - only fires on a regression
+        raise AssertionError("a resumed pass must not re-materialise the vault")
+
+    orig_mat = mod.materialise_vault_slice
+    mod.materialise_vault_slice = _no_materialise
+    fake = FakeWebUI()
+    orig_http = mod._http_json
+    orig_upload = mod._upload_and_embed
+    _stub_http(mod, fake)
+    _stub_upload(mod)
+    try:
+        staged = mod.provision_user("http://x", "tok", TEMPLATE, root, {"id": "uid1", "name": "A", "role": "user"})
+    finally:
+        mod.materialise_vault_slice = orig_mat
+        mod._http_json = orig_http
+        mod._upload_and_embed = orig_upload
+
+    assert staged["stage"] == "done"
+    assert staged["kb_id"] == "kb-existing"
+    assert staged["model_id"] == "peer-uid1"
+    creates = [c for c in fake.calls if str(c[1]).endswith("/knowledge/create")]
+    assert creates == [], "a resumed pass must reuse the recorded KB, not create a second"
+    assert mod._load_state(root)["uid1"]["stage"] == "done"
+
+
+def test_provision_user_skips_pages_already_in_the_kb(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    mod = import_source()
+    mod.materialise_vault_slice(TEMPLATE, root / "peer-uid2")
+    fake = FakeWebUI(kb_files=[{"name": "user.md", "id": "fid-user"}])
+    orig_http = mod._http_json
+    orig_upload = mod._upload_and_embed
+    _stub_http(mod, fake)
+    uploads = _stub_upload(mod)
+    try:
+        staged = mod.provision_user("http://x", "tok", TEMPLATE, root, {"id": "uid2", "name": "B", "role": "user"})
+    finally:
+        mod._http_json = orig_http
+        mod._upload_and_embed = orig_upload
+
+    assert staged["stage"] == "done"
+    assert "user.md" not in uploads, "a page already in the KB must not be uploaded again"
+    assert uploads, "the other vault pages should still be embedded"
+
+
+def test_provision_user_fresh_materialises_and_completes(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    mod = import_source()
+    fake = FakeWebUI()
+    orig_http = mod._http_json
+    orig_upload = mod._upload_and_embed
+    _stub_http(mod, fake)
+    _stub_upload(mod)
+    try:
+        staged = mod.provision_user("http://x", "tok", TEMPLATE, root, {"id": "uid3", "name": "C", "role": "user"})
+    finally:
+        mod._http_json = orig_http
+        mod._upload_and_embed = orig_upload
+
+    assert (root / "peer-uid3" / "AGENTS.md").exists()
+    assert staged["stage"] == "done"
+
+
+def test_provision_user_mints_fresh_kb_if_recorded_kb_is_missing(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    vault = root / "peer-uid4"
+    mod = import_source()
+    mod.materialise_vault_slice(TEMPLATE, vault)
+    mod._save_state(root, {"uid4": {"stage": "embed", "kb_id": "kb-dead", "vault_path": str(vault)}})
+
+    fake = FakeWebUI(missing_kbs={"kb-dead"})
+    orig_http = mod._http_json
+    orig_upload = mod._upload_and_embed
+    _stub_http(mod, fake)
+    _stub_upload(mod)
+    try:
+        staged = mod.provision_user("http://x", "tok", TEMPLATE, root, {"id": "uid4", "name": "D", "role": "user"})
+    finally:
+        mod._http_json = orig_http
+        mod._upload_and_embed = orig_upload
+
+    assert staged["stage"] == "done"
+    assert staged["kb_id"] == "kb-created"
+    creates = [c for c in fake.calls if str(c[1]).endswith("/knowledge/create")]
+    assert len(creates) == 1, "a missing recorded KB must force creating a new one"
+
+
+def test_prune_marks_vanished_users_orphaned(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    mod = import_source()
+    mod._save_state(
+        root,
+        {
+            "gone": {"stage": "done", "vault_path": "/x/gone"},
+            "here": {"stage": "done", "vault_path": "/x/here"},
+        },
+    )
+    orphaned = mod._prune_vanished_users(root, [{"id": "here"}])
+    assert orphaned == ["gone"]
+    state = mod._load_state(root)
+    assert state["gone"]["stage"] == "orphaned"
+    assert isinstance(state["gone"]["orphaned_at"], int)
+    assert state["here"]["stage"] == "done"
+
+
+def test_prune_ignores_an_empty_user_list(tmp_path: Path) -> None:
+    """A transient empty user read must never mass-orphan every record."""
+    root = tmp_path / "knowledge"
+    mod = import_source()
+    mod._save_state(root, {"gone": {"stage": "done"}})
+    assert mod._prune_vanished_users(root, []) == []
+    assert mod._load_state(root)["gone"]["stage"] == "done"
