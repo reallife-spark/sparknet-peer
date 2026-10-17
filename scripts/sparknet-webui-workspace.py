@@ -106,8 +106,7 @@ def _session(prov: Any, webui: str, email: str, password_file: Path) -> str:
     return prov.webui_token(webui, email, password)
 
 
-def _http_json(base: str, path: str, method: str, token: str, body: Any = None,
-               timeout: float = 60):
+def _http_json(base: str, path: str, method: str, token: str, body: Any = None, timeout: float = 60):
     req = urllib.request.Request(f"{base}{path}", method=method)
     req.add_header("Accept", "application/json")
     req.add_header("Authorization", f"Bearer {token}")
@@ -136,14 +135,14 @@ def _multipart(base: str, path: str, token: str, fields: list[tuple[str, Any]]) 
         if isinstance(value, tuple):
             fname, content = value
             parts += [
-                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{fname}\"\r\n"
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{fname}"\r\n'
                 f"Content-Type: application/octet-stream\r\n\r\n".encode(),
                 content if isinstance(content, bytes) else content.encode("utf-8"),
                 b"\r\n",
             ]
         else:
             parts += [
-                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n".encode(),
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
                 str(value).encode("utf-8"),
                 b"\r\n",
             ]
@@ -229,8 +228,7 @@ def cmd_skills_import(webui: str, token: str, skills_root: Path) -> int:
 # --- tools --------------------------------------------------------------------
 
 
-def bridge_connection(grant_token: str, url: str = DEFAULT_BRIDGE_URL,
-                      spec_path: str = DEFAULT_SPEC_PATH) -> dict:
+def bridge_connection(grant_token: str, url: str = DEFAULT_BRIDGE_URL, spec_path: str = DEFAULT_SPEC_PATH) -> dict:
     return {
         "url": url,
         "path": spec_path,
@@ -247,8 +245,7 @@ def bridge_connection(grant_token: str, url: str = DEFAULT_BRIDGE_URL,
     }
 
 
-def cmd_tools_register(webui: str, token: str, grant_file: Path,
-                       url: str, spec_path: str) -> int:
+def cmd_tools_register(webui: str, token: str, grant_file: Path, url: str, spec_path: str) -> int:
     grant_file = grant_file.expanduser()
     if not grant_file.is_file():
         raise Failure(f"missing bridge grant token file: {grant_file}")
@@ -263,14 +260,19 @@ def cmd_tools_register(webui: str, token: str, grant_file: Path,
 
     conn = bridge_connection(grant, url=url, spec_path=spec_path)
     kept = [
-        c for c in existing
-        if not (isinstance(c, dict) and c.get("type") == "openapi"
-                and str(c.get("url", "")).rstrip("/") == url.rstrip("/"))
+        c
+        for c in existing
+        if not (
+            isinstance(c, dict) and c.get("type") == "openapi" and str(c.get("url", "")).rstrip("/") == url.rstrip("/")
+        )
     ]
     connections = [*kept, conn]
 
     status, resp = _http_json(
-        webui, "/api/v1/configs/tool_servers", "POST", token,
+        webui,
+        "/api/v1/configs/tool_servers",
+        "POST",
+        token,
         {"TOOL_SERVER_CONNECTIONS": connections},
     )
     if status != 200:
@@ -310,32 +312,28 @@ def _upload_and_embed(webui: str, token: str, path: Path) -> str:
     processing, run the synchronous ``/retrieval/process/file``, then return the
     file id for the caller to add to a KB.
     """
-    status, resp = _multipart(webui, "/api/v1/files/", token,
-                              [("file", (path.name, path.read_bytes())),
-                               ("process", "false")])
+    status, resp = _multipart(
+        webui, "/api/v1/files/", token, [("file", (path.name, path.read_bytes())), ("process", "false")]
+    )
     if status != 200 or not isinstance(resp, dict) or "id" not in resp:
         raise Failure(f"file upload failed {path}: HTTP {status}: {resp}")
     file_id = resp["id"]
-    status, resp = _http_json(webui, "/api/v1/retrieval/process/file", "POST", token,
-                              {"file_id": file_id}, timeout=600)
+    status, resp = _http_json(webui, "/api/v1/retrieval/process/file", "POST", token, {"file_id": file_id}, timeout=600)
     if status != 200:
         raise Failure(f"file process failed {path}: HTTP {status}: {resp}")
     return file_id
 
 
-def _add_file_to_kb(webui: str, token: str, kb_id: str, file_id: str,
-                    directory_id: str | None = None) -> None:
+def _add_file_to_kb(webui: str, token: str, kb_id: str, file_id: str, directory_id: str | None = None) -> None:
     body: dict[str, Any] = {"file_id": file_id}
     if directory_id:
         body["directory_id"] = directory_id
-    status, resp = _http_json(webui, f"/api/v1/knowledge/{kb_id}/file/add",
-                              "POST", token, body, timeout=600)
+    status, resp = _http_json(webui, f"/api/v1/knowledge/{kb_id}/file/add", "POST", token, body, timeout=600)
     if status != 200:
         raise Failure(f"kb add failed: HTTP {status}: {resp}")
 
 
-def cmd_rebuild_structure(webui: str, token: str, vault_root: Path,
-                          kb_name: str) -> int:
+def cmd_rebuild_structure(webui: str, token: str, vault_root: Path, kb_name: str) -> int:
     """Recreate the structure KB as a faithful mirror of the role vault.
 
     The per-user KB mirrors the node's numbered vault (00_System..07_Archives):
@@ -357,11 +355,17 @@ def cmd_rebuild_structure(webui: str, token: str, vault_root: Path,
         _delete_knowledge(webui, token, existing)
         log(f"deleted old {kb_name} ({existing})")
 
-    status, resp = _http_json(webui, "/api/v1/knowledge/create", "POST", token, {
-        "name": kb_name,
-        "description": "mirror of the node's role vault (numbered layout); role charters are namespaced",
-        "access_grants": [],
-    })
+    status, resp = _http_json(
+        webui,
+        "/api/v1/knowledge/create",
+        "POST",
+        token,
+        {
+            "name": kb_name,
+            "description": "mirror of the node's role vault (numbered layout); role charters are namespaced",
+            "access_grants": [],
+        },
+    )
     if status != 200 or not isinstance(resp, dict) or "id" not in resp:
         raise Failure(f"knowledge create failed: HTTP {status}: {resp}")
     kb_id = resp["id"]
@@ -386,9 +390,11 @@ def cmd_rebuild_structure(webui: str, token: str, vault_root: Path,
         if directory_id:
             moved += 1
 
-    log(f"{kb_name}: rebuilt with {added} files ({reused} reused by content "
+    log(
+        f"{kb_name}: rebuilt with {added} files ({reused} reused by content "
         f"hash), {moved} filed into {len(dirs)} numbered directories "
-        f"(kb {kb_id})")
+        f"(kb {kb_id})"
+    )
     return 0
 
 
@@ -446,11 +452,17 @@ def cmd_default_model(webui: str, token: str, model: str) -> int:
         raise Failure(f"models config read failed: HTTP {status}: {cur}")
     pinned = cur.get("DEFAULT_PINNED_MODELS") or ""
     order = cur.get("MODEL_ORDER_LIST") or []
-    status, resp = _http_json(webui, "/api/v1/configs/models", "POST", token, {
-        "DEFAULT_MODELS": model,
-        "DEFAULT_PINNED_MODELS": pinned,
-        "MODEL_ORDER_LIST": order,
-    })
+    status, resp = _http_json(
+        webui,
+        "/api/v1/configs/models",
+        "POST",
+        token,
+        {
+            "DEFAULT_MODELS": model,
+            "DEFAULT_PINNED_MODELS": pinned,
+            "MODEL_ORDER_LIST": order,
+        },
+    )
     if status != 200:
         raise Failure(f"default model update failed: HTTP {status}: {resp}")
     log(f"default chat model set to {model}")
@@ -489,14 +501,23 @@ def _parser() -> argparse.ArgumentParser:
         description="Wire a sparknet node's Open WebUI workspace (peer PLAN Step 12).",
     )
     p.add_argument("--webui", default=os.environ.get("SPARKNET_WEBUI") or "http://127.0.0.1:8181")
-    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL")
-                   or "admin@sparknet.local")
-    p.add_argument("--admin-password-file", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
-                                or "~/.local/state/sparknet/cluster2/webui-admin-password"))
-    p.add_argument("--bridge-grant-file", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_WEBUI_BRIDGE_GRANT_FILE")
-                                or "~/.local/state/sparknet/cluster2/webui-bridge-grant.token"))
+    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL") or "admin@sparknet.local")
+    p.add_argument(
+        "--admin-password-file",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(
+            os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
+            or "~/.local/state/sparknet/cluster2/webui-admin-password"
+        ),
+    )
+    p.add_argument(
+        "--bridge-grant-file",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(
+            os.environ.get("SPARKNET_WEBUI_BRIDGE_GRANT_FILE")
+            or "~/.local/state/sparknet/cluster2/webui-bridge-grant.token"
+        ),
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="sign in and summarize the surface")
@@ -505,16 +526,16 @@ def _parser() -> argparse.ArgumentParser:
     kb.add_argument("kb_id")
 
     ski = sub.add_parser("skills-import", help="import .opencode/skills into Workspace > Skills")
-    ski.add_argument("--skills-dir", type=Path,
-                     default=Path("~").expanduser() / "sparknet-cluster2" / ".opencode" / "skills")
+    ski.add_argument(
+        "--skills-dir", type=Path, default=Path("~").expanduser() / "sparknet-cluster2" / ".opencode" / "skills"
+    )
 
     tools = sub.add_parser("tools-register", help="register the dispatch bridge as the vault tool server")
     tools.add_argument("--url", default=os.environ.get("SPARKNET_BRIDGE_URL") or DEFAULT_BRIDGE_URL)
     tools.add_argument("--spec-path", default=DEFAULT_SPEC_PATH)
 
     rs = sub.add_parser("rebuild-structure", help="rebuild the KB as a mirror of the role vault")
-    rs.add_argument("--vault-root", type=Path,
-                    default=Path("~").expanduser() / "sparknet-cluster2" / "peer-node")
+    rs.add_argument("--vault-root", type=Path, default=Path("~").expanduser() / "sparknet-cluster2" / "peer-node")
     rs.add_argument("--kb-name", default=DEFAULT_KB_NAME)
 
     dm = sub.add_parser("default-model", help="set the default chat model")
@@ -535,8 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "skills-import":
         return cmd_skills_import(args.webui, token, args.skills_dir)
     if args.command == "tools-register":
-        return cmd_tools_register(args.webui, token, args.bridge_grant_file,
-                                  args.url, args.spec_path)
+        return cmd_tools_register(args.webui, token, args.bridge_grant_file, args.url, args.spec_path)
     if args.command == "rebuild-structure":
         return cmd_rebuild_structure(args.webui, token, args.vault_root, args.kb_name)
     if args.command == "default-model":

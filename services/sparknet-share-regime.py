@@ -346,9 +346,7 @@ class Regime:
         share["state"] = "open"
         share["last_use"] = at
         if share["temporary"]:
-            share["idle_deadline"] = _iso(
-                now + timedelta(seconds=self._seconds("idle_close"))
-            )
+            share["idle_deadline"] = _iso(now + timedelta(seconds=self._seconds("idle_close")))
         else:
             share["idle_deadline"] = None
         share["ratification_deadline"] = (
@@ -747,10 +745,8 @@ class Regime:
         port = self._port_for_kind(share["accepted_kind"])
         port_service = self.port_services.get(str(port), {})
         interface = f"spk-share-{share_id}"
-        nftables = (
-            "nft add rule inet sparknet forward iifname {interface} ip daddr {toward}".format(
-                interface=interface, toward=share["toward"]
-            )
+        nftables = "nft add rule inet sparknet forward iifname {interface} ip daddr {toward}".format(
+            interface=interface, toward=share["toward"]
         )
         return {
             "share_id": share_id,

@@ -177,14 +177,12 @@ def _upload_and_embed(url: str, token: str, path: Path) -> str:
     content = path.read_bytes()
     parts = []
     parts.append(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
         f"Content-Type: text/markdown\r\n\r\n".encode()
     )
     parts.append(content)
     parts.append(b"\r\n")
-    parts.append(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"process\"\r\n\r\nfalse\r\n".encode()
-    )
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="process"\r\n\r\nfalse\r\n'.encode())
     parts.append(f"--{boundary}--\r\n".encode())
     data = b"".join(parts)
 
@@ -195,8 +193,7 @@ def _upload_and_embed(url: str, token: str, path: Path) -> str:
         result = json.loads(resp.read())
     file_id = result["id"]
 
-    status, body = _http_json(f"{url}/api/v1/retrieval/process/file", "POST", token,
-                              {"file_id": file_id})
+    status, body = _http_json(f"{url}/api/v1/retrieval/process/file", "POST", token, {"file_id": file_id})
     if status != 200:
         raise Refusal(f"file process failed ({name}): HTTP {status}: {body}")
     return file_id
@@ -288,7 +285,7 @@ def write_vault_env(vault: Path) -> Path:
                 line = f'VAULT_PATH="{vault}"'
             elif line.startswith("VAULT_SOURCES_DIR="):
                 line = f'VAULT_SOURCES_DIR="{vault}/_raw"'
-            elif line.startswith('VAULT_CATEGORIES='):
+            elif line.startswith("VAULT_CATEGORIES="):
                 line = 'VAULT_CATEGORIES="concepts,entities,skills,references,synthesis,journal"'
             lines.append(line)
         env_text = "\n".join(lines) + "\n"
@@ -319,11 +316,7 @@ def _vault_pages(vault: Path) -> list[Path]:
     pages: list[Path] = []
     for root, dirs, files in os.walk(vault, followlinks=False):
         root_path = Path(root)
-        dirs[:] = [
-            d
-            for d in dirs
-            if d != ".state" and not (root_path / d).is_symlink()
-        ]
+        dirs[:] = [d for d in dirs if d != ".state" and not (root_path / d).is_symlink()]
         for name in files:
             page = root_path / name
             if page.suffix.lower() != ".md" or page.is_symlink():
@@ -358,8 +351,7 @@ def _grant(principal_id: str, permission: str = "read") -> dict:
 
 
 def webui_token(base: str, email: str, password: str) -> str:
-    status, body = _http_json(f"{base}/api/v1/auths/signin", "POST", None,
-                              {"email": email, "password": password})
+    status, body = _http_json(f"{base}/api/v1/auths/signin", "POST", None, {"email": email, "password": password})
     if status != 200 or not isinstance(body, dict) or "token" not in body:
         raise Refusal(f"signin failed: HTTP {status}: {body}")
     return body["token"]
@@ -399,8 +391,7 @@ def create_kb(base: str, token: str, name: str, user_id: str) -> str:
     return resp["id"]
 
 
-def embed_vault_into_kb(base: str, token: str, kb_id: str, vault: Path,
-                        progress: Any = None) -> list[tuple[Path, str]]:
+def embed_vault_into_kb(base: str, token: str, kb_id: str, vault: Path, progress: Any = None) -> list[tuple[Path, str]]:
     """Upload each markdown page and attach it to the KB.
 
     Returns ``(vault-relative path, file id)`` pairs so the caller can file each
@@ -415,8 +406,7 @@ def embed_vault_into_kb(base: str, token: str, kb_id: str, vault: Path,
             if progress:
                 progress(f"upload failed {rel}: {e}")
             continue
-        status, resp = _http_json(f"{base}/api/v1/knowledge/{kb_id}/file/add",
-                                  "POST", token, {"file_id": file_id})
+        status, resp = _http_json(f"{base}/api/v1/knowledge/{kb_id}/file/add", "POST", token, {"file_id": file_id})
         if status != 200:
             if progress:
                 progress(f"kb add failed {rel}: HTTP {status}")
@@ -437,15 +427,15 @@ def list_knowledge_directories(base: str, token: str, kb_id: str) -> dict[str, s
 
 
 def create_knowledge_directory(base: str, token: str, kb_id: str, name: str) -> str:
-    status, resp = _http_json(f"{base}/api/v1/knowledge/{kb_id}/dirs/create", "POST",
-                              token, {"name": name, "parent_id": None})
+    status, resp = _http_json(
+        f"{base}/api/v1/knowledge/{kb_id}/dirs/create", "POST", token, {"name": name, "parent_id": None}
+    )
     if status != 200 or not isinstance(resp, dict) or "id" not in resp:
         raise Refusal(f"knowledge dir create failed ({name}): HTTP {status}: {resp}")
     return resp["id"]
 
 
-def ensure_directories(base: str, token: str, kb_id: str,
-                       names: tuple[str, ...] | list[str]) -> dict[str, str]:
+def ensure_directories(base: str, token: str, kb_id: str, names: tuple[str, ...] | list[str]) -> dict[str, str]:
     """Create any missing numbered directories; return ``name -> id``."""
     existing = list_knowledge_directories(base, token, kb_id)
     for name in names:
@@ -454,16 +444,16 @@ def ensure_directories(base: str, token: str, kb_id: str,
     return existing
 
 
-def move_file_to_directory(base: str, token: str, kb_id: str, file_id: str,
-                           dir_id: str) -> bool:
-    status, _ = _http_json(f"{base}/api/v1/knowledge/{kb_id}/file/move", "POST",
-                           token, {"file_id": file_id, "directory_id": dir_id})
+def move_file_to_directory(base: str, token: str, kb_id: str, file_id: str, dir_id: str) -> bool:
+    status, _ = _http_json(
+        f"{base}/api/v1/knowledge/{kb_id}/file/move", "POST", token, {"file_id": file_id, "directory_id": dir_id}
+    )
     return status == 200
 
 
-def organize_into_directories(base: str, token: str, kb_id: str,
-                              added: list[tuple[Path, str]],
-                              progress: Any = None) -> int:
+def organize_into_directories(
+    base: str, token: str, kb_id: str, added: list[tuple[Path, str]], progress: Any = None
+) -> int:
     """Create the numbered directories and file each embedded page into its own."""
     dirs = ensure_directories(base, token, kb_id, NUMBERED_TOP)
     moved = 0
@@ -481,8 +471,9 @@ def organize_into_directories(base: str, token: str, kb_id: str,
     return moved
 
 
-def create_user_model(base: str, token: str, user_id: str, kb_id: str,
-                      base_model: str = "plan", display_name: str | None = None) -> str:
+def create_user_model(
+    base: str, token: str, user_id: str, kb_id: str, base_model: str = "plan", display_name: str | None = None
+) -> str:
     """Create the user's own model bound to `base_model` with their KB attached."""
     model_id = f"peer-{user_id}"
     body = {
@@ -500,8 +491,15 @@ def create_user_model(base: str, token: str, user_id: str, kb_id: str,
     return model_id
 
 
-def provision_user(base: str, token: str, template: Path, knowledge_root: Path,
-                   user: dict, base_model: str = "plan", progress: Any = None) -> dict:
+def provision_user(
+    base: str,
+    token: str,
+    template: Path,
+    knowledge_root: Path,
+    user: dict,
+    base_model: str = "plan",
+    progress: Any = None,
+) -> dict:
     """Provision a peer- vault + KB + default model for one approved user."""
     user_id = user.get("id")
     if not user_id:
@@ -546,13 +544,11 @@ def provision_user(base: str, token: str, template: Path, knowledge_root: Path,
 
         if progress:
             progress("filing pages into numbered directories")
-        staged["dirs_moved"] = organize_into_directories(base, token, kb_id, added,
-                                                        progress=progress)
+        staged["dirs_moved"] = organize_into_directories(base, token, kb_id, added, progress=progress)
 
         if progress:
             progress("creating default model")
-        model_id = create_user_model(base, token, user_id, kb_id,
-                                     base_model=base_model, display_name=f"peer-{name}")
+        model_id = create_user_model(base, token, user_id, kb_id, base_model=base_model, display_name=f"peer-{name}")
         staged["model_id"] = model_id
         staged["stage"] = "done"
     finally:
@@ -568,8 +564,7 @@ def _slug(user_id: str) -> str:
     return safe[:64] or "user"
 
 
-def reindex_user(base: str, token: str, vault: Path, kb_id: str,
-                 progress: Any = None) -> bool:
+def reindex_user(base: str, token: str, vault: Path, kb_id: str, progress: Any = None) -> bool:
     """Re-embed changed/added pages for an existing provisioned user."""
     digest = _content_digest(vault)
     if progress:
@@ -579,9 +574,18 @@ def reindex_user(base: str, token: str, vault: Path, kb_id: str,
     return bool(added)
 
 
-def run_watch(base: str, email: str, password: str, template: Path,
-              knowledge_root: Path, base_model: str = "plan", interval: int = 90,
-              provision_existing: bool = True, master_copy=False, once=False) -> None:
+def run_watch(
+    base: str,
+    email: str,
+    password: str,
+    template: Path,
+    knowledge_root: Path,
+    base_model: str = "plan",
+    interval: int = 90,
+    provision_existing: bool = True,
+    master_copy=False,
+    once=False,
+) -> None:
     state = _load_state(knowledge_root)
     while True:
         try:
@@ -597,8 +601,7 @@ def run_watch(base: str, email: str, password: str, template: Path,
                 if not provision_existing and not rec:
                     continue
                 try:
-                    provision_user(base, token, template, knowledge_root, user,
-                                   base_model=base_model, progress=log)
+                    provision_user(base, token, template, knowledge_root, user, base_model=base_model, progress=log)
                     state = _load_state(knowledge_root)
                 except Refusal as e:
                     log(f"provision skipped {user.get('name')}: {e}")
@@ -630,28 +633,37 @@ def run_watch(base: str, email: str, password: str, template: Path,
 def main() -> None:
     p = argparse.ArgumentParser(
         description=(
-            "Sparknet vault provisioner (peer PLAN Step 11): per-user "
-            "peer-<user_id> knowledge vaults + WebUI KBs."
+            "Sparknet vault provisioner (peer PLAN Step 11): per-user peer-<user_id> knowledge vaults + WebUI KBs."
         )
     )
-    p.add_argument("--template", type=lambda s: Path(s).expanduser(),
-                   default=Path(__file__).resolve().parent.parent,
-                   help="peer-node template directory (default: repo peer-node)")
-    p.add_argument("--knowledge-root", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_VAULT_KNOWLEDGE_ROOT")
-                                or "/srv/sparknet/knowledge"))
+    p.add_argument(
+        "--template",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(__file__).resolve().parent.parent,
+        help="peer-node template directory (default: repo peer-node)",
+    )
+    p.add_argument(
+        "--knowledge-root",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(os.environ.get("SPARKNET_VAULT_KNOWLEDGE_ROOT") or "/srv/sparknet/knowledge"),
+    )
     p.add_argument("--webui", default=os.environ.get("SPARKNET_WEBUI") or "http://127.0.0.1:8181")
-    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL")
-                   or "admin@sparknet.local")
-    p.add_argument("--admin-password-file", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
-                                or "~/.local/state/sparknet/cluster2/webui-admin-password"))
+    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL") or "admin@sparknet.local")
+    p.add_argument(
+        "--admin-password-file",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(
+            os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
+            or "~/.local/state/sparknet/cluster2/webui-admin-password"
+        ),
+    )
     p.add_argument("--base-model", default="plan")
     p.add_argument("--interval", type=int, default=90)
     p.add_argument("--no-provision-existing", action="store_true")
     p.add_argument("--once", action="store_true", help="one poll, then exit")
-    p.add_argument("--master-copy", action="store_true",
-                   help="allow master-<id> copies (elected-Master + admin signed in)")
+    p.add_argument(
+        "--master-copy", action="store_true", help="allow master-<id> copies (elected-Master + admin signed in)"
+    )
     args = p.parse_args()
 
     password_file = args.admin_password_file.expanduser()
@@ -666,8 +678,11 @@ def main() -> None:
         sys.exit(1)
 
     if args.master_copy:
-        print("sparknet-vault-provisioner: --master-copy is inactive in this pair; "
-              "every user (incl. admins) receives a peer- copy.", file=sys.stderr)
+        print(
+            "sparknet-vault-provisioner: --master-copy is inactive in this pair; "
+            "every user (incl. admins) receives a peer- copy.",
+            file=sys.stderr,
+        )
 
     knowledge_root = args.knowledge_root.absolute()
     (knowledge_root / ".state").mkdir(parents=True, exist_ok=True)

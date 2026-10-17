@@ -90,10 +90,12 @@ def test_normalize_event_maps_known_names_and_rejects_everything_else(tmp_path: 
 
 def test_normalize_event_carries_the_role_transition(tmp_path: Path) -> None:
     mod = import_source()
-    rec = mod.normalize_event({
-        "name": "user.role_updated",
-        "data": {"id": "user-9", "role": "pending", "new_role": "user"},
-    })
+    rec = mod.normalize_event(
+        {
+            "name": "user.role_updated",
+            "data": {"id": "user-9", "role": "pending", "new_role": "user"},
+        }
+    )
     assert rec is not None
     assert rec["event"] == "user.role_updated"
     assert rec["subject_id"] == "user-9"
@@ -125,19 +127,22 @@ def test_listener_roundtrip(tmp_path: Path) -> None:
     thread.start()
     port = server.server_address[1]
     try:
+
         def post(payload: dict):
             data = json.dumps(payload).encode()
             req = urllib.request.Request(
-                f"http://127.0.0.1:{port}/events", data=data, method="POST",
-                headers={"Content-Type": "application/json"})
+                f"http://127.0.0.1:{port}/events",
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status
 
         assert post({"name": "auth.login", "actor": {"email": "a@b"}}) == 204
         assert post({"name": "chat.finished"}) == 202, "an out-of-list event is acknowledged, not retried"
         assert post({"name": "auth.signup"}) == 204
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/events", data=b"not-json", method="POST")
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/events", data=b"not-json", method="POST")
         with pytest.raises(urllib.error.HTTPError) as exc_info:
             urllib.request.urlopen(req, timeout=10)
         assert exc_info.value.code == 400, "a malformed body is a real error, not silently ignored"
@@ -223,6 +228,5 @@ def test_service_imports_only_stdlib(tmp_path: Path) -> None:
             found.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             found.add(node.module.split(".")[0])
-    offenders = sorted(name for name in found
-                       if name not in sys.stdlib_module_names)
+    offenders = sorted(name for name in found if name not in sys.stdlib_module_names)
     assert not offenders, f"admin agent imports non-stdlib modules: {offenders}"

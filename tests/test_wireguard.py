@@ -465,9 +465,9 @@ def test_key_scan_covers_untracked_files_too() -> None:
     # happens only while a rename is staged but uncommitted, and the file is
     # scanned under its new path either way.
     in_scope_tracked = {
-        p for p in _tracked_files()
-        if p.is_file()
-        and not any(part in SCAN_EXCLUDE for part in p.resolve().relative_to(VAULT_ROOT).parts)
+        p
+        for p in _tracked_files()
+        if p.is_file() and not any(part in SCAN_EXCLUDE for part in p.resolve().relative_to(VAULT_ROOT).parts)
     }
     hidden = sorted(str(p) for p in in_scope_tracked if p.resolve() not in scanned)
     assert not hidden, f"in-scope tracked files invisible to the scan: {hidden[:5]}"

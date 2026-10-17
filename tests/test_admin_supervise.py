@@ -139,17 +139,14 @@ class FakeWebUI:
                     return
                 self._send({"detail": "not found"}, 404)
 
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
                 self._route("GET")
 
-
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
                 self._route("POST")
 
-
-            def do_DELETE(self) -> None:  # noqa: N802
+            def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
                 self._route("DELETE")
-
 
             def log_message(self, *_: Any) -> None:
                 pass
@@ -254,9 +251,7 @@ class Server:
     """A live loopback bridge (the plain personality), port owned by pytest."""
 
     def __init__(self, ctx: dict):
-        self.bridge = bridge_mod.Bridge(
-            ctx["vault"], registry=ctx["registry_path"], clock=lambda: NOW
-        )
+        self.bridge = bridge_mod.Bridge(ctx["vault"], registry=ctx["registry_path"], clock=lambda: NOW)
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
             bridge_mod._make_handler(self.bridge, bridge_mod.STATES, bridge_mod._make_router(bridge_mod.STATES)),
@@ -325,9 +320,9 @@ def test_set_user_role_executes_against_the_node_own_webui(server, ctx, master_k
     status, payload = server.post("/admin/set_user_role", body)
     assert status == 200, payload
     assert payload["result"]["role"] == "admin"
-    assert ctx["webui"].recorded_roles == [
-        {"user": "user-07", "role": "admin"}
-    ], "the role change must land on the node's own WebUI with the node's own token"
+    assert ctx["webui"].recorded_roles == [{"user": "user-07", "role": "admin"}], (
+        "the role change must land on the node's own WebUI with the node's own token"
+    )
 
 
 def test_approve_user_is_a_role_user_update(server, ctx, master_key, grant_registry):
@@ -483,10 +478,13 @@ def _spool(ctx: dict, rows: list[dict]) -> None:
 
 def test_list_events_reads_the_node_own_spool(server, ctx, master_key, grant_registry):
     grant_registry(["telemetry", "admin-supervise"])
-    _spool(ctx, [
-        {"event": "auth.signup", "ts": "t1", "actor": "ana@example.test", "node": "n"},
-        {"event": "auth.login", "ts": "t2", "actor": "ana@example.test", "node": "n"},
-    ])
+    _spool(
+        ctx,
+        [
+            {"event": "auth.signup", "ts": "t1", "actor": "ana@example.test", "node": "n"},
+            {"event": "auth.login", "ts": "t2", "actor": "ana@example.test", "node": "n"},
+        ],
+    )
     body = _admin_request(master_key, action="list_events", **_target(ctx))
     status, payload = server.post("/admin/list_events", body)
     assert status == 200, payload
@@ -514,8 +512,10 @@ def test_list_events_needs_the_capability_like_any_other_action(server, ctx, mas
 
 def test_list_events_skips_corrupt_rows_and_caps_the_response(server, ctx, master_key, grant_registry):
     grant_registry(["telemetry", "admin-supervise"])
-    good = [{"event": "auth.login", "ts": f"t{i}", "actor": "a@b.test", "node": "n"}
-            for i in range(bridge_mod.ADMIN_EVENTS_MAX + 3)]
+    good = [
+        {"event": "auth.login", "ts": f"t{i}", "actor": "a@b.test", "node": "n"}
+        for i in range(bridge_mod.ADMIN_EVENTS_MAX + 3)
+    ]
     spool = bridge_mod._state_dir(ctx["vault"]) / "admin-events" / "events.jsonl"
     spool.parent.mkdir(parents=True, exist_ok=True)
     spool.write_text("not json\n" + "".join(json.dumps(r) + "\n" for r in good), encoding="utf-8")

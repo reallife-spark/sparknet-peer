@@ -70,7 +70,7 @@ def test_pyproject_dependency_list_matches_the_allowlist() -> None:
 def test_cryptography_is_importable() -> None:
     """Fail loudly with an actionable message rather than at first request."""
     try:
-        import cryptography  # noqa: F401
+        import cryptography  # noqa: F401 - import decides whether to skip
     except ImportError as exc:
         pytest.fail(f"cryptography is required but not installed ({exc}); run: make devtools")
 
@@ -178,7 +178,7 @@ def test_test_approval_is_gone_and_the_bridge_cannot_write_the_ledger() -> None:
     whose own tests own the block shape.
     """
     source = (VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py").read_text()
-    assert "add_argument(\"--test-approval\")" not in source, "the ledger-writing flag came back"
+    assert 'add_argument("--test-approval")' not in source, "the ledger-writing flag came back"
     assert "blockchain" not in source, "the bridge never names the ledger path"
 
     before = LEDGER.read_bytes()

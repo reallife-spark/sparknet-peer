@@ -583,18 +583,14 @@ def test_vault_access_all_permits_repeated_writes_and_reads(server, ctx):
     assert (ctx["vault"] / "05_Knowledge" / "concepts" / "all-1.md").is_file()
     assert (ctx["vault"] / "05_Knowledge" / "concepts" / "all-2.md").is_file()
 
-    read = server.request(
-        "GET", "/vault/cat?path=05_Knowledge/concepts/all-1.md", token=_bearer(grant)
-    )
+    read = server.request("GET", "/vault/cat?path=05_Knowledge/concepts/all-1.md", token=_bearer(grant))
     assert read[0] == 200, "a session in all-mode must still read after its first write"
 
 
 def test_vault_access_per_tool_restores_the_one_shot_rule(server, ctx):
     grant = _grant(ctx)
     _open_session(server, ctx, grant)
-    server.request(
-        "POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "all"}, token=_bearer(grant)
-    )
+    server.request("POST", f"/session/{grant['grant_id']}/vault-access", {"mode": "all"}, token=_bearer(grant))
     first = server.request(
         "POST",
         "/vault/capture",

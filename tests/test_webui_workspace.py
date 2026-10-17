@@ -62,9 +62,7 @@ def test_build_skills_zip_wraps_each_skill_and_decides_create(tmp_path: Path) ->
     root = tmp_path / "skills"
     for name in ("plan-writer", "vault-curator"):
         (root / name).mkdir(parents=True)
-        (root / name / "SKILL.md").write_text(
-            f"---\nname: {name}\ndescription: d\n---\nbody\n"
-        )
+        (root / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\nbody\n")
         (root / name / "ref.txt").write_text("helper")
     (root / "LICENSE").mkdir(exist_ok=True)
     data, decisions = ws.build_skills_zip(root)
@@ -176,8 +174,7 @@ def test_add_file_to_kb_passes_directory_id_when_given() -> None:
     original = ws._http_json
     ws._http_json = _http_json_patched
     try:
-        ws._add_file_to_kb("http://x", "tok", "kb-1", "f-1",
-                           directory_id="dir-7")
+        ws._add_file_to_kb("http://x", "tok", "kb-1", "f-1", directory_id="dir-7")
     finally:
         ws._http_json = original
     assert seen["body"] == {"file_id": "f-1", "directory_id": "dir-7"}
@@ -208,9 +205,12 @@ def test_find_file_id_reuses_a_global_record_by_content_hash(tmp_path: Path) -> 
 
     def _http_json_patched(base, path, method, token, body=None, timeout=None):
         assert (path, method) == ("/api/v1/files/", "GET")
-        return 200, {"items": [
-            {"id": "f-old", "hash": summary},
-        ], "total": 1}
+        return 200, {
+            "items": [
+                {"id": "f-old", "hash": summary},
+            ],
+            "total": 1,
+        }
 
     original = ws._http_json
     ws._http_json = _http_json_patched

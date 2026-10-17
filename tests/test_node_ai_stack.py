@@ -88,12 +88,9 @@ def test_the_only_published_port_is_the_firewalled_webui():
         "loopback-only dispatch bridge (127.0.0.1:4096); a bridge-network "
         "container cannot reach a loopback-only host listener"
     )
-    assert webui.get("ports") is None, (
-        "with network_mode: host the surface binds through PORT, not a ports map"
-    )
+    assert webui.get("ports") is None, "with network_mode: host the surface binds through PORT, not a ports map"
     assert webui.get("environment", {}).get("PORT") == "8181", (
-        "the operator decision is a single LAN + overlay port 8181, paired with "
-        "the SPARKNET-FW host firewall"
+        "the operator decision is a single LAN + overlay port 8181, paired with the SPARKNET-FW host firewall"
     )
     lookup = _load(MANIFEST)["topology"]
     assert lookup["published_ports"] == ["0.0.0.0:8181 (host netns)"]
@@ -183,8 +180,7 @@ def test_the_first_admin_and_signup_are_deploy_time_settings_with_no_committed_s
         "DEFAULT_USER_ROLE=pending, not a disabled signup form"
     )
     assert env.get("DEFAULT_USER_ROLE") == "pending", (
-        "new accounts must land pending until an admin accepts them — pending "
-        "confers zero access"
+        "new accounts must land pending until an admin accepts them — pending confers zero access"
     )
     assert "${SPARKNET_WEBUI_ADMIN_PASSWORD" in env.get("WEBUI_ADMIN_PASSWORD", ""), (
         "the machine-admin password must be a deploy-time variable, never a committed value"

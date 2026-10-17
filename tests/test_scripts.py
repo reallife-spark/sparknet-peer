@@ -334,10 +334,28 @@ def test_approvals_are_appended_through_the_shared_tool(tmp_path: Path) -> None:
 
     run("user-init", "--owner-id", "U-10001")
     _write_node_key(authz_tool, tmp_path / "state" / "keys" / "ed25519-node.key.b64")
-    run("append-approval", "--question", "may this node ingest the capture?", "--decision", "approved",
-        "--agent", "tester", "--model", "none")
-    run("append-approval", "--question", "a second one?", "--decision", "clarified",
-        "--agent", "tester", "--model", "none")
+    run(
+        "append-approval",
+        "--question",
+        "may this node ingest the capture?",
+        "--decision",
+        "approved",
+        "--agent",
+        "tester",
+        "--model",
+        "none",
+    )
+    run(
+        "append-approval",
+        "--question",
+        "a second one?",
+        "--decision",
+        "clarified",
+        "--agent",
+        "tester",
+        "--model",
+        "none",
+    )
 
     blocks = json.loads((root / "blockchain" / "ledger.json").read_text())["blocks"]
     assert len(blocks) == 2

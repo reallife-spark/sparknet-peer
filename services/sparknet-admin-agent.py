@@ -192,8 +192,7 @@ def _http_json(url: str, method: str, token: str | None, body: Any = None) -> tu
 
 
 def webui_token(base: str, email: str, password: str) -> str:
-    status, body = _http_json(f"{base}/api/v1/auths/signin", "POST", None,
-                              {"email": email, "password": password})
+    status, body = _http_json(f"{base}/api/v1/auths/signin", "POST", None, {"email": email, "password": password})
     if status != 200 or not isinstance(body, dict) or "token" not in body:
         raise Refusal(f"signin failed: HTTP {status}: {body}")
     return body["token"]
@@ -227,9 +226,9 @@ def fetch_users(base: str, token: str) -> list[dict]:
     return users
 
 
-def ensure_auth_webhooks(base: str, token: str, url: str,
-                         events: tuple[str, ...] | None = None,
-                         name: str = "sparknet-admin-agent") -> tuple[str, str]:
+def ensure_auth_webhooks(
+    base: str, token: str, url: str, events: tuple[str, ...] | None = None, name: str = "sparknet-admin-agent"
+) -> tuple[str, str]:
     """Register (or update) this node's auth-event webhook, idempotently.
 
     Open WebUI 0.10+ stores event webhooks under the ``events.webhooks`` config
@@ -247,13 +246,18 @@ def ensure_auth_webhooks(base: str, token: str, url: str,
             wid = row.get("id")
             if not wid:
                 continue
-            res, resp = _http_json(f"{base}/api/events/webhooks/{wid}", "PUT",
-                                   token, {"url": url, "events": list(events), "enabled": True})
+            res, resp = _http_json(
+                f"{base}/api/events/webhooks/{wid}", "PUT", token, {"url": url, "events": list(events), "enabled": True}
+            )
             if res != 200:
                 raise Refusal(f"webhook update failed: HTTP {res}: {resp}")
             return "updated", str(wid)
-    res, resp = _http_json(f"{base}/api/events/webhooks", "POST", token,
-                           {"name": name, "url": url, "events": list(events), "enabled": True})
+    res, resp = _http_json(
+        f"{base}/api/events/webhooks",
+        "POST",
+        token,
+        {"name": name, "url": url, "events": list(events), "enabled": True},
+    )
     if res != 200:
         raise Refusal(f"webhook create failed: HTTP {res}: {resp}")
     wid = resp.get("id") if isinstance(resp, dict) else None
@@ -269,9 +273,11 @@ def snapshot_users(base: str, token: str, state_dir: Path) -> Path:
         tally[role] = tally.get(role, 0) + 1
     out = state_dir / "admin-events" / "users.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"tally": tally, "users": users,
-                               "taken_at_usec": int(time.time() * 1_000_000)},
-                              indent=2, sort_keys=True))
+    out.write_text(
+        json.dumps(
+            {"tally": tally, "users": users, "taken_at_usec": int(time.time() * 1_000_000)}, indent=2, sort_keys=True
+        )
+    )
     os.chmod(out, 0o600)
     return out
 
@@ -358,28 +364,41 @@ def _parse(argv: list[str] | None = None) -> argparse.Namespace:
             "registration. Holds no signing key; performs no admin mutation."
         )
     )
-    p.add_argument("--webui", default=os.environ.get("SPARKNET_WEBUI") or "http://127.0.0.1:8181",
-                   help="this node's Open WebUI base URL")
-    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL")
-                   or "admin@sparknet.local")
-    p.add_argument("--admin-password-file", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
-                                or "~/.local/state/sparknet/cluster2/webui-admin-password"))
-    p.add_argument("--state-dir", type=lambda s: Path(s).expanduser(),
-                   default=Path(os.environ.get("SPARKNET_STATE_DIR")
-                                or "~/.local/state/sparknet"))
-    p.add_argument("--spool", type=lambda s: Path(s).expanduser(), default=None,
-                   help="override the event spool path (default: <state-dir>/admin-events/events.jsonl)")
+    p.add_argument(
+        "--webui",
+        default=os.environ.get("SPARKNET_WEBUI") or "http://127.0.0.1:8181",
+        help="this node's Open WebUI base URL",
+    )
+    p.add_argument("--admin-email", default=os.environ.get("SPARKNET_WEBUI_ADMIN_EMAIL") or "admin@sparknet.local")
+    p.add_argument(
+        "--admin-password-file",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(
+            os.environ.get("SPARKNET_WEBUI_ADMIN_PASSWORD_FILE")
+            or "~/.local/state/sparknet/cluster2/webui-admin-password"
+        ),
+    )
+    p.add_argument(
+        "--state-dir",
+        type=lambda s: Path(s).expanduser(),
+        default=Path(os.environ.get("SPARKNET_STATE_DIR") or "~/.local/state/sparknet"),
+    )
+    p.add_argument(
+        "--spool",
+        type=lambda s: Path(s).expanduser(),
+        default=None,
+        help="override the event spool path (default: <state-dir>/admin-events/events.jsonl)",
+    )
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--serve", action="store_true",
-                   help="run the loopback webhook listener (default mode)")
-    p.add_argument("--register-webhooks", action="store_true",
-                   help="idempotently configure the node's Open WebUI auth-event webhook to this node")
-    p.add_argument("--poll-once", action="store_true",
-                   help="snapshot the node's users/roles once, then exit")
-    p.add_argument("--once", action="store_true",
-                   help="with --serve: handle one request, then exit")
+    p.add_argument("--serve", action="store_true", help="run the loopback webhook listener (default mode)")
+    p.add_argument(
+        "--register-webhooks",
+        action="store_true",
+        help="idempotently configure the node's Open WebUI auth-event webhook to this node",
+    )
+    p.add_argument("--poll-once", action="store_true", help="snapshot the node's users/roles once, then exit")
+    p.add_argument("--once", action="store_true", help="with --serve: handle one request, then exit")
     args = p.parse_args(argv)
     if args.spool is None:
         args.spool = spool_path(args.state_dir)

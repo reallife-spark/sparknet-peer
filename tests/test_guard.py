@@ -750,9 +750,7 @@ def test_mode_probe_targets_the_policy_anchor_not_a_literal(authorized_vault: Pa
     assert connects == [("10.99.0.1", 51820)], "the probe must dial the policy's anchor, not a literal"
 
 
-def test_off_overlay_refusal_does_not_disclose_the_source_allowlist(
-    harness: Harness, master_key, monkeypatch
-) -> None:
+def test_off_overlay_refusal_does_not_disclose_the_source_allowlist(harness: Harness, master_key, monkeypatch) -> None:
     """F13: a rejected caller learns it is off-overlay, not which sources pass."""
     monkeypatch.setattr(harness.guard, "permitted_sources", lambda: {"203.0.113.9"})
     status, body = harness.post(_packet(master_key))
@@ -764,6 +762,7 @@ def test_off_overlay_refusal_does_not_disclose_the_source_allowlist(
 
 def test_internal_errors_do_not_leak_internals(harness: Harness, master_key, monkeypatch, capsys) -> None:
     """F10: a 500 must carry a stable reason, with the detail on stderr only."""
+
     def _boom() -> list[str]:
         raise RuntimeError("SECRET_GUARD_DETAIL")
 

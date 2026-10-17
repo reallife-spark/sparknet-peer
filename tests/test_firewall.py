@@ -71,9 +71,7 @@ def test_the_firewall_does_not_widen_into_signing_or_overlay_material():
 def test_the_unit_calls_the_shim_and_orders_after_docker():
     unit = UNIT.read_text()
     assert "ExecStart=/usr/local/libexec/sparknet/sparknet-firewall install" in unit
-    assert "After=docker.service" in unit, (
-        "DOCKER-USER is docker's chain; the rule must re-apply after docker starts"
-    )
+    assert "After=docker.service" in unit, "DOCKER-USER is docker's chain; the rule must re-apply after docker starts"
     assert "PartOf=docker.service" in unit, (
         "a docker daemon restart recreates DOCKER-USER; PartOf re-applies the rules then too"
     )

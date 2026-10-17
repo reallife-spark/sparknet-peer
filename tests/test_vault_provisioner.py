@@ -69,9 +69,7 @@ def _materialise(tmp_path: Path) -> tuple[Path, Path]:
 def import_source():
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(
-        "sparknet_vault_provisioner", str(PROVISIONER)
-    )
+    spec = importlib.util.spec_from_file_location("sparknet_vault_provisioner", str(PROVISIONER))
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
@@ -203,6 +201,7 @@ def test_state_roundtrip(tmp_path: Path) -> None:
     mod._save_state(root, {"u1": {"stage": "done"}})
     assert mod._load_state(root) == {"u1": {"stage": "done"}}
     import os
+
     assert os.stat(root / ".state" / "provisioned.json").st_mode & 0o077 == 0
 
 

@@ -190,9 +190,7 @@ class ReplayGuard:
             raw = json.loads(self.store_path.read_text())
             cutoff = datetime.now(timezone.utc).timestamp() - self.ttl * 2
             self._seen = {
-                str(key): float(value)
-                for key, value in raw.get("seen", {}).items()
-                if float(value) >= cutoff
+                str(key): float(value) for key, value in raw.get("seen", {}).items() if float(value) >= cutoff
             }
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             # A corrupt store must not silently reset replay protection, but it
@@ -408,9 +406,7 @@ class Guard:
         self.vault_root = vault_root
         self.apply_enabled = apply_enabled
         self.dry_run = dry_run
-        self.replay = replay or ReplayGuard(
-            store_path=vault_root / ".state" / "guard-replay.json"
-        )
+        self.replay = replay or ReplayGuard(store_path=vault_root / ".state" / "guard-replay.json")
         self.master_pubkey = master_pubkey
         self.ledger = ledger or AuditLedger(vault_root / "blockchain" / "guard-audit.json")
         # One apply at a time: ThreadingHTTPServer hands each request its own

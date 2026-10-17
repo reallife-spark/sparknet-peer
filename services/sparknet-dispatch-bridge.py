@@ -218,9 +218,7 @@ def _load_admin_agent() -> Any:
     """
     path = Path(__file__).resolve().parent / "sparknet-admin-agent.py"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"admin agent missing at {path}; the bridge refuses to reimplement its WebUI client"
-        )
+        raise FileNotFoundError(f"admin agent missing at {path}; the bridge refuses to reimplement its WebUI client")
     if "sparknet_admin_agent_bridge" in sys.modules:
         return sys.modules["sparknet_admin_agent_bridge"]
     spec = importlib.util.spec_from_file_location("sparknet_admin_agent_bridge", path)
@@ -242,9 +240,7 @@ def _load_guard_replay() -> Any:
     """
     path = Path(__file__).resolve().parent / "sparknet-guard-d.py"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"guard missing at {path}; the bridge refuses to reimplement replay protection"
-        )
+        raise FileNotFoundError(f"guard missing at {path}; the bridge refuses to reimplement replay protection")
     if "sparknet_guard_bridge" in sys.modules:
         return sys.modules["sparknet_guard_bridge"]
     spec = importlib.util.spec_from_file_location("sparknet_guard_bridge", path)
@@ -1069,9 +1065,7 @@ class Bridge:
         method, template = ADMIN_WEBUI_ROUTES[action]
         missing = [f for f in ADMIN_ENTITY_FIELDS[action] if not request.get(f)]
         if missing:
-            raise _HttpRequestError(
-                400, "missing-field", f"admin action {action} requires {', '.join(missing)}"
-            )
+            raise _HttpRequestError(400, "missing-field", f"admin action {action} requires {', '.join(missing)}")
         base, _token = self._webui_conn()
         try:
             url = template.format(base=base, **{f: str(request[f]) for f in ADMIN_ENTITY_FIELDS[action]})

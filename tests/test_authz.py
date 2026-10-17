@@ -282,8 +282,16 @@ def _admin_request(**overrides: object) -> dict:
 
 
 def test_admin_request_missing_required_field_is_rejected() -> None:
-    for field in ("request_id", "master_node_id", "target_node_id",
-                  "target_fingerprint", "issued_at", "expires_at", "nonce", "action"):
+    for field in (
+        "request_id",
+        "master_node_id",
+        "target_node_id",
+        "target_fingerprint",
+        "issued_at",
+        "expires_at",
+        "nonce",
+        "action",
+    ):
         request = _admin_request(**{field: None})
         with pytest.raises(authz.AuthzError, match="missing required"):
             authz.admin_request_message(request)
