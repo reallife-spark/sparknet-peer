@@ -7,7 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/sparknet-env.sh"
 
 DRY_RUN=0
-VERBOSE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -15,12 +14,8 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
-    --verbose|-v)
-      VERBOSE=1
-      shift
-      ;;
     --help|-h)
-      echo "Usage: $0 [--dry-run] [--verbose]"
+      echo "Usage: $0 [--dry-run]"
       echo "Minimal viable sparknet sync (user-space over WireGuard overlay)"
       exit 0
       ;;
