@@ -179,7 +179,7 @@ def test_node_containment_is_not_the_cluster_killswitch() -> None:
 
 def test_guard_manifest_validation_reports_provenance() -> None:
     proc = subprocess.run(
-        ["python3", str(VAULT_ROOT / "services" / "sparknet-guard-d.py"), "--check-manifest"],
+        [sys.executable, str(VAULT_ROOT / "services" / "sparknet-guard-d.py"), "--check-manifest"],
         capture_output=True,
         text=True,
         check=False,
@@ -201,7 +201,7 @@ def test_guard_manifest_validation_fails_when_provenance_is_missing(tmp_path: Pa
     manifest["protected_paths"].append("/etc/sparknet/invented.yaml")
     (dest / "manifests" / "critical-manifest.json").write_text(json.dumps(manifest, indent=2))
     proc = subprocess.run(
-        ["python3", str(dest / "services" / "sparknet-guard-d.py"), "--check-manifest"],
+        [sys.executable, str(dest / "services" / "sparknet-guard-d.py"), "--check-manifest"],
         capture_output=True,
         text=True,
         check=False,
@@ -216,7 +216,7 @@ def test_guard_manifest_validation_fails_when_provenance_is_missing(tmp_path: Pa
 
 def test_dispatch_health_ok() -> None:
     proc = subprocess.run(
-        ["python3", str(VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py"), "--health"],
+        [sys.executable, str(VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py"), "--health"],
         capture_output=True,
         text=True,
         check=False,
@@ -244,7 +244,7 @@ def test_dispatch_never_writes_the_ledger(tmp_path: Path) -> None:
     )
     for mode in ([], ["--dry-run"], ["--health"]):
         proc = subprocess.run(
-            ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), *mode],
+            [sys.executable, str(dest / "services" / "sparknet-dispatch-bridge.py"), *mode],
             capture_output=True,
             text=True,
             check=False,
@@ -255,7 +255,7 @@ def test_dispatch_never_writes_the_ledger(tmp_path: Path) -> None:
         assert (dest / "blockchain" / "ledger.json").read_bytes() == before, f"mode {mode} wrote"
 
     refused = subprocess.run(
-        ["python3", str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
+        [sys.executable, str(dest / "services" / "sparknet-dispatch-bridge.py"), "--test-approval"],
         capture_output=True,
         text=True,
         check=False,
@@ -322,7 +322,7 @@ def test_approvals_are_appended_through_the_shared_tool(tmp_path: Path) -> None:
 
     def run(*args: str) -> subprocess.CompletedProcess:
         proc = subprocess.run(
-            ["python3", str(tool), "--vault", str(root), *args],
+            [sys.executable, str(tool), "--vault", str(root), *args],
             capture_output=True,
             text=True,
             check=False,
@@ -379,7 +379,7 @@ def test_approvals_are_appended_through_the_shared_tool(tmp_path: Path) -> None:
         assert not {"index", "payload", "block_hash"} & set(block)
 
     verified = subprocess.run(
-        ["python3", str(tool), "--vault", str(root), "verify"],
+        [sys.executable, str(tool), "--vault", str(root), "verify"],
         capture_output=True,
         text=True,
         check=False,
@@ -471,7 +471,7 @@ def test_every_systemd_shell_script_parses(script: Path) -> None:
 @pytest.mark.parametrize("service", sorted((VAULT_ROOT / "services").glob("*.py")), ids=lambda p: p.name)
 def test_every_service_compiles(service: Path) -> None:
     proc = subprocess.run(
-        ["python3", "-m", "py_compile", str(service)], capture_output=True, text=True, check=False, timeout=60
+        [sys.executable, "-m", "py_compile", str(service)], capture_output=True, text=True, check=False, timeout=60
     )
     assert proc.returncode == 0, f"{service.name} does not compile:\n{proc.stdout}{proc.stderr}"
 
