@@ -49,11 +49,14 @@ lint: ## Ruff if available; otherwise explains how to get it
 	fi
 
 devtools: ## Create .venv with cryptography + pytest + ruff (opt-in)
+	@# venv's argument is the DIRECTORY, not the interpreter inside it; passing
+	@# $(VENV_PY) built a venv under .venv/bin/python/ and broke every later
+	@# exec of $(VENV_PY) on a clone that did not already have one.
 	@if [ -x "$(VENV_PY)" ]; then \
 		echo "$(VENV_PY) already exists; refreshing deps"; \
 	else \
 		echo "Creating $(VAULT_ROOT)/.venv"; \
-		python3 -m venv "$(VENV_PY)"; \
+		python3 -m venv "$(VAULT_ROOT)/.venv"; \
 	fi
 	@"$(VENV_PY)" -m pip install --quiet --upgrade pip
 	@# This subvault is not a distributable package, so install dependencies by
