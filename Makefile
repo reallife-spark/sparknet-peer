@@ -11,9 +11,14 @@ VAULT_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 ROLE_ROOT := $(VAULT_ROOT)
 FABRIC_ROOT := $(patsubst %/,%,$(dir $(VAULT_ROOT)))
 
-# Prefer the optional .venv when it exists, otherwise the system interpreter.
+# Interpreter: this subvault's optional .venv if it exists, else the fabric
+# venv `make devtools` creates at the fabric root, else the system one. The
+# middle tier is what a fabric checkout provisions — `make ci` never creates a
+# role venv, so without it every role target here falls through to whatever
+# python is installed, which on a runner has no `cryptography`.
 VENV_PY := $(VAULT_ROOT)/.venv/bin/python
-PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),python3)
+FABRIC_VENV_PY := $(FABRIC_ROOT)/.venv/bin/python
+PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),$(if $(wildcard $(FABRIC_VENV_PY)),$(FABRIC_VENV_PY),python3))
 
 .PHONY: help env-init validate test lint devtools provision dist bundle install-units \
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
@@ -104,7 +109,7 @@ wg-render: ## Render wg0.conf from the template. Dry-run; pass APPLY=1 to write 
 	@./scripts/sparknet-wireguard-render.sh $(if $(APPLY),--apply,)
 
 authz-verify: ## Verify this node's identity against the signed registry
-	@./scripts/sparknet-run python3 ./services/sparknet-authz.py verify \
+	@./scripts/sparknet-run $(PY) ./services/sparknet-authz.py verify \
 		"$(if $(IDENTITY),$(IDENTITY),manifests/node-identity.json)" \
 		--registry "$(if $(REGISTRY),$(REGISTRY),manifests/node-authorizations.json)" \
 		--master-pubkey "$(if $(MASTER_PUBKEY),$(MASTER_PUBKEY),manifests/keys/master-ed25519.pub.b64)"
@@ -120,7 +125,7 @@ containment: ## THIS NODE's root-gated teardown. Not the cluster KillSwitch (Mas
 	@./scripts/sparknet-node-containment.sh $(if $(DRY_RUN),--dry-run,)
 
 guard-status: ## Report the guard's manifest state and authorization posture
-	@./scripts/sparknet-run python3 ./services/sparknet-guard-d.py --check-manifest
+	@./scripts/sparknet-run $(PY) ./services/sparknet-guard-d.py --check-manifest
 
 # --- peer-role contract conformance -----------------------------------------
 # These read the shared contract from the parent and prove this role still
