@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 GUARD = VAULT_ROOT / "services" / "sparknet-guard-d.py"
-PROTECTED_TARGET = "/etc/wireguard/wg0.conf"
+PROTECTED_TARGET = "/etc/wireguard/wg1.conf"
 
 
 def _load_guard_module():
@@ -454,6 +454,75 @@ def test_enforce_immutability_dry_run_changes_nothing() -> None:
         timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_enforce_immutability_refuses_when_chattr_cannot_lock(tmp_path: Path, monkeypatch) -> None:
+    """A filesystem where chattr cannot protect a path must fail closed.
+
+    The failure this guards against: `chattr +i` fails, the old code swallowed
+    the refusal and returned the path in its "enforced" list, so every surface
+    reported the protected path as locked while it stayed writable. When the
+    lock genuinely cannot be applied, that must be an error, not a silent skip.
+    """
+    target = tmp_path / "protected.conf"
+    target.write_text("data")
+
+    monkeypatch.setattr(guardmod, "_is_immutable", lambda _p: False)
+
+    def _fail(_argv, *, dry_run: bool) -> None:
+        raise guardmod.Refusal(500, "privileged_command_failed", "chattr: Operation not supported")
+
+    monkeypatch.setattr(guardmod, "_run", _fail)
+
+    with pytest.raises(guardmod.Refusal) as caught:
+        guardmod.enforce_immutability([str(target)], dry_run=False)
+    assert caught.value.code == "immutability_not_enforced"
+
+
+def test_enforce_immutability_tolerates_already_locked_when_lsattr_unreadable(tmp_path: Path, monkeypatch) -> None:
+    """When lsattr cannot read the flag but chattr confirms it, that is not a failure."""
+    target = tmp_path / "protected.conf"
+    target.write_text("data")
+
+    monkeypatch.setattr(guardmod, "_is_immutable", lambda _p: None)
+
+    def _ok(_argv, *, dry_run: bool) -> None:
+        return None
+
+    monkeypatch.setattr(guardmod, "_run", _ok)
+
+    # chattr "succeeded"; the lsattr recheck is None (unreadable) but there was no
+    # refusal, so the path is accepted rather than failing on an unreadable probe.
+    assert guardmod.enforce_immutability([str(target)], dry_run=False) == [str(target)]
+
+
+def test_apply_patch_refuses_when_relock_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A patch that lands but cannot be re-locked must refuse, not claim success.
+
+    apply_patch writes then restores `chattr +i`. If the restore fails and the
+    file is not actually immutable afterwards, the guard must surface that: a
+    protected file left patched-but-writable while the guard prints "re-locked"
+    is precisely the state the immutable bit exists to forbid.
+    """
+    target = tmp_path / "protected.conf"
+    target.write_text("old")
+
+    monkeypatch.setattr(guardmod, "_is_immutable", lambda _p: False)
+
+    calls: list[list[str]] = []
+
+    def _run(argv, *, dry_run: bool) -> None:
+        calls.append(argv)
+        # The unlock (-i) succeeds; the re-lock (+i) fails.
+        if argv[0] == "chattr" and argv[1] == "+i":
+            raise guardmod.Refusal(500, "privileged_command_failed", "chattr: Operation not supported")
+
+    monkeypatch.setattr(guardmod, "_run", _run)
+
+    with pytest.raises(guardmod.Refusal) as caught:
+        guardmod.apply_patch(target, b"new", dry_run=False)
+    assert caught.value.code == "immutability_not_restored"
+    assert target.read_bytes() == b"new"
 
 
 # --- the earlier stub is gone -------------------------------------------------

@@ -1,6 +1,6 @@
 ---
 title: sparknet peer-node — vault index
-updated: 2026-10-06
+updated: 2026-10-18
 ---
 
 # peer-node vault index
@@ -40,6 +40,7 @@ Links on this page are wikilinks so they resolve whether the page is opened as
 ## Where to start
 
 - Session memory: `MEMORY.md`, then `02_Daily/<today>.md`
-- Work in flight: `PLAN.md` — its `current:` field names the step
+- Work in flight: `PLAN.md` — terminal (`current: done`); new peer work gets
+  a **new** step
 - The rules: [[alpha-agent]]
 - The contract (single source of truth): `contracts/tracking-schema.json`

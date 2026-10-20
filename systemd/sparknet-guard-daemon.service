@@ -1,9 +1,12 @@
 [Unit]
 Description=Sparknet Critical File Guard (Master-gated immutable file guard)
-# The guard refuses to bind unless the overlay is up, so the anchor unit is a
-# hard requirement rather than a soft preference.
-Requires=sparknet-wireguard-anchor.service
-After=sparknet-wireguard-anchor.service network-online.target
+# The guard refuses to bind unless the overlay is up (see the runtime anchored
+# check in sparknet-guard-d.py). That refusal is the real gate, so this unit does
+# NOT hard-Require the wg-quick anchor: a deployment that brings the overlay up
+# out-of-band (e.g. userspace wireguard-go wg1, where wg-quick + kernel module is
+# unavailable) must not have the guard drag in an anchor it cannot run. After=
+# network-online is enough; the guard declines to listen until it is anchored.
+After=network-online.target
 Wants=network-online.target
 
 [Service]

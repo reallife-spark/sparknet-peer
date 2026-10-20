@@ -105,11 +105,11 @@ KEY_OUT ?= $(VAULT_ROOT)/.state/keys
 keys: ## Generate WireGuard + Ed25519 keypairs into $(KEY_OUT) (secrets, never committed)
 	@SPARKNET_KEY_DIR="$(KEY_OUT)" ./scripts/sparknet-keygen.sh --role node
 
-wg-render: ## Render wg0.conf from the template. Dry-run; pass APPLY=1 to write at 0600
+wg-render: ## Render <iface>.conf from the template (default wg0; SPARKNET_WG_INTERFACE overrides). Dry-run; APPLY=1 writes at 0600
 	@./scripts/sparknet-wireguard-render.sh $(if $(APPLY),--apply,)
 
 authz-verify: ## Verify this node's identity against the signed registry
-	@./scripts/sparknet-run $(PY) ./services/sparknet-authz.py verify \
+	@./scripts/sparknet-run $(PY) "$(FABRIC_ROOT)/shared/sparknet-authz.py" verify \
 		"$(if $(IDENTITY),$(IDENTITY),manifests/node-identity.json)" \
 		--registry "$(if $(REGISTRY),$(REGISTRY),manifests/node-authorizations.json)" \
 		--master-pubkey "$(if $(MASTER_PUBKEY),$(MASTER_PUBKEY),manifests/keys/master-ed25519.pub.b64)"

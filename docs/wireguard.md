@@ -34,21 +34,61 @@ make wg-render APPLY=1
 make anchor
 ```
 
-`make anchor` is `scripts/sparknet-wireguard-anchor.sh`, which renders, runs
-`wg-quick up`, and then applies `chattr +i`. The systemd unit
-`sparknet-wireguard-anchor.service` calls the same script through a generated
-shim, so the unit contains no vault path and stays relocation-safe.
+`make anchor` is `scripts/sparknet-wireguard-anchor.sh`, which renders, brings
+the interface up through `scripts/sparknet-wg-bringup.sh` (the kernel module when
+present, `wireguard-go` when not — see below), and then applies `chattr +i`. The
+systemd unit `sparknet-wireguard-anchor.service` calls the same script through a
+generated shim, so the unit contains no vault path and stays relocation-safe.
+
+## Hosts without the kernel module
+
+The AGX hosts this overlay runs on ship `CONFIG_WIREGUARD=n`, so `wg-quick up`
+cannot create the interface — and its userspace fallback is unreliable: it starts
+`wireguard-go`, does not wait for the UAPI socket, and can hang in `wg setconf`
+before the interface is configured, leaving the node with no overlay after a
+reboot. `scripts/sparknet-wg-bringup.sh` does the sequence deterministically:
+probe with `ip link add … type wireguard`; on failure start `wireguard-go`, wait
+for `/var/run/wireguard/<iface>.sock`, then `wg setconf` (capped by `timeout`
+because it can apply *and then* hang, with the result confirmed by `wg show`),
+then `ip addr add` / `ip link set mtu … up` and any routes.
+
+The unit reads its secrets from `EnvironmentFile=-/etc/sparknet/wireguard.env`
+(`SPARKNET_WG_*`), so the anchor self-restores at boot with no operator action.
 
 ## Why the config is immutable
 
-`chattr +i` on `wg0.conf` means this node cannot remove its own Master link. That
+`chattr +i` on `wg1.conf` means this node cannot remove its own Master link. That
 is the "cannot be removed or blocked" requirement: an operator without root
 cannot edit the file, and a compromised local process cannot either.
+
+**Both copies are pinned.** The anchor pins the authoritative state-dir config
+(`$SPARKNET_STATE_DIR/wireguard/<iface>.conf`) *and* the conventional
+`/etc/wireguard/<iface>.conf` copy — the path tooling and an operator expect, and
+the path the guard's protected-path manifest names. Pinning only one would leave
+the other a writable route to the live overlay. If any step between the unlock and
+the final pin fails, the anchor's `EXIT` trap re-pins whatever exists, so a
+partial run never ends with the config writable.
+
+The anchor requires `SPARKNET_WG_INTERFACE` and refuses to guess it. A default
+such as `:-wg0` would silently bring up a second, wrong interface when the env
+file is missing; the deployment env file must name it (e.g. `wg1`).
+
+### The Master pins too, and re-renders to change peers
+
+The Master runs `sparknet-master-wireguard-anchor.sh`, which pins **its** overlay
+config the same way — the Master is a peer that won an election, so it follows the
+same anchor discipline. The consequence is that a peer stanza cannot be added or
+removed by editing the pinned config in place: `wg set wg0 peer … remove` changes
+the *running* interface immediately (and is unaffected by the pin), but making a
+change persist across a reboot means re-rendering the config and re-running the
+root-owned anchor, which unlocks, rewrites and re-pins both copies. That is the
+intended workflow: an overlay-topology change is an operator action that goes
+through the anchor, not a quiet in-place edit.
 
 The Master retains control from the other side:
 
 ```bash
-wg set wg0 peer <NODE_PUBLIC_KEY> remove      # revoke
+wg set wg0 peer <NODE_PUBLIC_KEY> remove      # revoke (immediate, survives the pin)
 ```
 
 Revocation takes effect immediately on the Master and, on the node, on the next
@@ -68,6 +108,23 @@ Tearing down the anchor is either:
 The WLAN guard pins WLAN egress to `10.100.0.1` only
 (`scripts/sparknet-wlan-guard.sh`). This is intentional: a revoked node keeps its
 local vault working but has no other network path.
+
+## WLAN uplink stability (AGX hosts)
+
+The management uplink is `wlan0`. On the AGX hosts the Broadcom driver enables
+802.11 power save by default, and a sleeping station intermittently misses
+replies — observed live as `No route to host` / stale ARP against `.21` while the
+node was in fact up on the cable and the overlay. The fix is applied on both
+hosts and persists across reboots:
+
+```bash
+sudo iw dev wlan0 set power_save off          # immediate
+sudo nmcli con mod <con> wifi.powersave 2      # persisted (2 = disable)
+```
+
+This is host-side OS tuning, not vault content, so it lives here as an operator
+note rather than in `sparknet-node-setup.sh` (which stands up the node
+container, not host networking).
 
 ## Secrets
 
@@ -92,6 +149,20 @@ module and no `CAP_NET_ADMIN`. These require a privileged target node and are
 - [ ] KillSwitch teardown and recovery
 
 Everything that *can* be checked without root is covered by
-`tests/test_wireguard.py` (25 tests): template placeholders, render output,
-key-shape validation, `/32` enforcement, dry-run purity, and that no private key
-material appears in tracked files.
+`tests/test_wireguard.py`: template placeholders, render output, key-shape
+validation, `/32` enforcement, dry-run purity, that no private key material
+appears in tracked files, and that the anchor delegates to the userspace bring-up
+helper rather than `wg-quick`.
+
+The userspace bring-up, the `chattr +i` pin and the cold-boot recovery path were
+verified **live** on the AGX pair (2026-10-19): with `wg1` deleted, restarting
+`sparknet-wireguard-anchor.service` rebuilds the interface through `wireguard-go`
+and the handshake returns within ~10 s; and a **real reboot of each host**
+restored `wg1` unattended (peer `10.100.0.2/32`, master `10.100.0.1/24`), the
+handshake returning without operator action. The development host still cannot
+run any of it, so the checklist above stays a target-node checklist.
+
+Both anchor units carry `Before=docker.service`, so the overlay address exists
+before the Docker daemon starts any container that binds it. Without that
+ordering the Master's admin surface (`10.100.0.1:8088`) failed at boot with
+`bind: cannot assign requested address` (exit 128).

@@ -119,6 +119,9 @@ install_rules() {
   jump_for_ports ip6tables INPUT "${CHAIN_IN}" "${PROTECTED_TCP[@]}"
 
   echo "sparknet-firewall: installed ${CHAIN_IN} (v4+v6) and ${CHAIN_FWD} (v4)"
+  # Prove it took. `install` reporting success for a half-built state is the
+  # failure this whole file exists to prevent, so the build verifies itself.
+  verify_rules
 }
 
 flush_rules() {
@@ -151,26 +154,62 @@ show_status() {
   ip6tables -S "${CHAIN_IN}" 2>/dev/null || echo "  (absent)"
 }
 
+verify_rules() {
+  # Prove the enforcement is actually present, on both families and both
+  # parents. `install` builds the rules; on a host missing this service (or if
+  # a docker restart dropped the FORWARD jump), nothing re-checks. A boot that
+  # runs `install` without this would report success for a half-built state.
+  need_root
+  local failures=()
+  local port
+
+  for port in "${PROTECTED_TCP[@]}"; do
+    iptables -C INPUT -p tcp --dport "$port" -j "${CHAIN_IN}" 2>/dev/null \
+      || failures+=("ipv4 INPUT --dport ${port} has no ${CHAIN_IN} jump")
+    ip6tables -C INPUT -p tcp --dport "$port" -j "${CHAIN_IN}" 2>/dev/null \
+      || failures+=("ipv6 INPUT --dport ${port} has no ${CHAIN_IN} jump")
+    iptables -C DOCKER-USER -p tcp --dport "$port" -j "${CHAIN_FWD}" 2>/dev/null \
+      || failures+=("ipv4 DOCKER-USER --dport ${port} has no ${CHAIN_FWD} jump")
+  done
+
+  # Each chain must end in a DROP, or traffic reaching it is not actually denied.
+  iptables -S "${CHAIN_IN}" 2>/dev/null | grep -q -- "-j DROP" \
+    || failures+=("ipv4 ${CHAIN_IN} has no terminal DROP")
+  ip6tables -S "${CHAIN_IN}" 2>/dev/null | grep -q -- "-j DROP" \
+    || failures+=("ipv6 ${CHAIN_IN} has no terminal DROP")
+  iptables -S "${CHAIN_FWD}" 2>/dev/null | grep -q -- "-j DROP" \
+    || failures+=("ipv4 ${CHAIN_FWD} has no terminal DROP")
+
+  if (( ${#failures[@]} > 0 )); then
+    echo "sparknet-firewall: VERIFY FAILED — the host firewall is not in force:" >&2
+    printf '  - %s\n' "${failures[@]}" >&2
+    return 1
+  fi
+  echo "sparknet-firewall: verified — ${#PROTECTED_TCP[@]} protected TCP ports jump to ${CHAIN_IN}/${CHAIN_FWD} on v4+v6, chains end in DROP"
+}
+
 case "${1:-}" in
   install) install_rules ;;
   flush)   flush_rules ;;
   status)  show_status ;;
+  verify)  verify_rules ;;
   --help|-h)
-    echo "Usage: $0 {install|status|flush}"
+    echo "Usage: $0 {install|status|verify|flush}"
     echo
     echo "SPARKNET-FW — the node's host firewall. Keeps the published AI-stack"
     echo "ports (8181, 11434, 18000) off the public internet while leaving the"
     echo "rest of the host's traffic alone."
     echo "  install   build + apply the SPARKNET-FW-IN and SPARKNET-FW-FWD chains (root)"
     echo "  status    show the chains and where they are jumped from (root)"
+    echo "  verify    exit non-zero unless every protected port is enforced (root)"
     echo "  flush     remove the chains and their jumps (root)"
     echo "Allowed sources: loopback, LAN 192.168.178.0/24, overlay 10.100.0.0/24,"
     echo "docker bridges 172.16.0.0/12, link-local. IPv6: loopback + link-local only."
-    echo "Idempotent: safe to re-run."
+    echo "Idempotent: safe to re-run. install verifies itself."
     exit 0
     ;;
   *)
-    echo "Usage: $0 {install|status|flush}" >&2
+    echo "Usage: $0 {install|status|verify|flush}" >&2
     exit 2
     ;;
 esac

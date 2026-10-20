@@ -18,6 +18,9 @@ RemainAfterExit=yes
 # install script places in /usr/local/libexec/sparknet (see
 # scripts/sparknet-install-units.sh).
 ExecStart=/usr/local/libexec/sparknet/sparknet-firewall install
+# install builds AND verifies in one step; this is a second, independent
+# assertion at the unit boundary so the boot log proves the rule is in force.
+ExecStartPost=/usr/local/libexec/sparknet/sparknet-firewall verify
 ExecReload=/usr/local/libexec/sparknet/sparknet-firewall install
 
 [Install]

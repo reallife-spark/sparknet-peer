@@ -19,9 +19,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/sparknet-env.sh"
 
+# The overlay interface name is node-local (the overlay address/MTU are pinned
+# by contracts/overlay.json, not the iface name). Default wg0; a deployment that
+# brings the overlay up out-of-band sets SPARKNET_WG_INTERFACE to match, e.g. wg1.
+IFACE="${SPARKNET_WG_INTERFACE:-wg0}"
 TEMPLATE="${SPARKNET_WG_TEMPLATE:-$SPARKNET_VAULT_ROOT/configs/wireguard/wg0-node.conf.template}"
 RENDER_DIR="${SPARKNET_WG_RENDER_DIR:-$SPARKNET_STATE_DIR/wireguard}"
-RENDERED="$RENDER_DIR/wg0.conf"
+RENDERED="$RENDER_DIR/$IFACE.conf"
 LISTEN_PORT="${SPARKNET_WG_LISTEN_PORT:-51820}"
 NODE_ADDRESS="${SPARKNET_WG_NODE_ADDRESS:-}"
 MASTER_ENDPOINT="${SPARKNET_WG_MASTER_ENDPOINT:-}"
@@ -108,7 +112,7 @@ fi
 
 mkdir -p "$RENDER_DIR"
 umask 077
-tmp="$(mktemp "$RENDER_DIR/.wg0.conf.XXXXXX")"
+tmp="$(mktemp "$RENDER_DIR/.$IFACE.conf.XXXXXX")"
 printf '%s\n' "$RENDERED_TEXT" > "$tmp"
 chmod 600 "$tmp"
 mv -f "$tmp" "$RENDERED"

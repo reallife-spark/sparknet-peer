@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "protected_paths": [
-    "/etc/wireguard/wg0.conf",
+    "/etc/wireguard/wg1.conf",
     "/etc/netplan/00-sparknet-interfaces.yaml",
     "/etc/netplan/02-sparknet-wifi-backup.yaml",
     "/etc/systemd/system/sparknet-wifi-guard.service",
@@ -15,13 +15,13 @@
     "_comment": "The vault is authoritative. 'source: vault' entries name the tracked file that produces the installed path. 'rendered_by' means the file is rendered from a template with secrets substituted at deploy time and is never committed. 'source: external' means no vault generator exists and the installed file is maintained by hand.",
     "generated": [
       {
-        "installed_path": "/etc/wireguard/wg0.conf",
+        "installed_path": "/etc/wireguard/wg1.conf",
         "vault_path": "configs/wireguard/wg0-node.conf.template",
         "source": "vault",
         "installer": null,
         "rendered_by": "scripts/sparknet-wireguard-render.sh",
-        "render_target": "$SPARKNET_STATE_DIR/wireguard/wg0.conf",
-        "notes": "Rendered from the vault template with secrets substituted from the environment at mode 0600, then pinned with chattr +i. Never committed. The canonical runtime copy lives in the vault state dir; /etc/wireguard/wg0.conf is the conventional system location and is kept in sync by the operator."
+        "render_target": "$SPARKNET_STATE_DIR/wireguard/wg1.conf",
+        "notes": "Rendered from the vault template with secrets substituted from the environment at mode 0600, then pinned with chattr +i. Never committed. The canonical runtime copy lives in the vault state dir; /etc/wireguard/wg1.conf is the conventional system location and is kept in sync by the operator."
       },
       {
         "installed_path": "/etc/netplan/00-sparknet-interfaces.yaml",

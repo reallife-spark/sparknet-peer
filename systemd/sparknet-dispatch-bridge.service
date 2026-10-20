@@ -1,0 +1,24 @@
+[Unit]
+Description=Sparknet dispatch bridge (signed /v1/status plus OpenAI/admin surfaces)
+Documentation=file:///usr/local/libexec/sparknet/sparknet-dispatch-bridge
+# The bridge offers two personalities: a loopback-only OpenAI/session/vault
+# surface that injects the local user environment, and an overlay-reachable
+# signed /v1/status + /admin/* surface the Master federates over. It therefore
+# listens on BOTH loopback and the node's overlay address and never a wildcard —
+# see contracts/admin-federation-runbook.md (Finding F1). Binding 0.0.0.0 would
+# expose the environment injector to the LAN, which is worse than the overlay.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=raxxar
+# No WorkingDirectory: the generated shim resolves the vault. --bind is
+# repeatable (one listener per address); the overlay address is this node's
+# authorized 10.100.0.2/32 from manifests/node-identity.json.
+ExecStart=/usr/local/libexec/sparknet/sparknet-dispatch-bridge --serve --bind 127.0.0.1 --bind 10.100.0.2
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

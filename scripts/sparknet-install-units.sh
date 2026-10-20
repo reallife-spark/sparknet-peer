@@ -22,12 +22,16 @@ source "$SCRIPT_DIR/sparknet-env.sh"
 
 BIN_DIR="${SPARKNET_BIN_DIR:-$HOME/.local/bin}"
 SYSTEM_BIN_DIR="${SPARKNET_SYSTEM_BIN_DIR:-/usr/local/libexec/sparknet}"
+# Python for the Python-backed shims. The services need >=3.10, which the host
+# system python3 may not be, so a deployment points this at its fabric venv
+# (e.g. SPARKNET_PYTHON=/home/raxxar/sparknet/.venv/bin/python).
+SPARKNET_PYTHON="${SPARKNET_PYTHON:-python3}"
 USER_UNIT_DIR="${USER_SYSTEMD_DIR:-$HOME/.config/systemd/user}"
 SYSTEM_UNIT_DIR="${SYSTEM_UNIT_DIR:-/etc/systemd/system}"
 
 # System units that run as root need their shim in the system location.
 # Entries are bare names; the shim is always sparknet-<name>.
-ROOT_UNITS=(wireguard-anchor guard wifi-guard firewall vault-provisioner admin-agent)
+ROOT_UNITS=(wireguard-anchor guard dispatch-bridge wifi-guard firewall vault-provisioner admin-agent)
 
 APPLY=0
 for arg in "$@"; do
@@ -63,13 +67,14 @@ note() { printf '  %s\n' "$1"; }
 # name -> command run inside the vault (resolved by sparknet-run)
 shim_body() {
   case "$1" in
-    guard)      printf 'exec %q python3 %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/services/sparknet-guard-d.py" ;;
+    guard)      printf 'exec %q %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_PYTHON" "$SPARKNET_VAULT_ROOT/services/sparknet-guard-d.py" ;;
+    dispatch-bridge) printf 'exec %q %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_PYTHON" "$SPARKNET_VAULT_ROOT/services/sparknet-dispatch-bridge.py" ;;
     wifi-guard) printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-wlan-guard.sh" ;;
     sync)       printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-sync.sh" ;;
     wireguard-anchor) printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-wireguard-anchor.sh" ;;
     firewall)   printf 'exec %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/scripts/sparknet-firewall.sh" ;;
-    vault-provisioner) printf 'exec %q python3 %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/services/sparknet-vault-provisioner.py" ;;
-    admin-agent) printf 'exec %q python3 %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_VAULT_ROOT/services/sparknet-admin-agent.py" ;;
+    vault-provisioner) printf 'exec %q %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_PYTHON" "$SPARKNET_VAULT_ROOT/services/sparknet-vault-provisioner.py" ;;
+    admin-agent) printf 'exec %q %q %q "$@"' "$SPARKNET_VAULT_ROOT/scripts/sparknet-run" "$SPARKNET_PYTHON" "$SPARKNET_VAULT_ROOT/services/sparknet-admin-agent.py" ;;
     *) echo "unknown shim: $1" >&2; exit 1 ;;
   esac
 }
@@ -113,7 +118,7 @@ done
 
 # --- units ------------------------------------------------------------------
 # System units run as root (the guard is root-gated); the sync pair is a user unit.
-SYSTEM_UNITS=(sparknet-wireguard-anchor.service sparknet-guard-daemon.service sparknet-wifi-guard.service sparknet-vault-provisioner.service sparknet-admin-agent.service)
+SYSTEM_UNITS=(sparknet-wireguard-anchor.service sparknet-guard-daemon.service sparknet-dispatch-bridge.service sparknet-wifi-guard.service sparknet-vault-provisioner.service sparknet-admin-agent.service sparknet-firewall.service)
 USER_UNITS=(sparknet-sync.service sparknet-sync.timer)
 
 echo

@@ -419,19 +419,29 @@ def _vault_source_files() -> list[Path]:
 
 
 def _scrub_envelope_signatures(text: str) -> str:
-    """Drop the provenance envelope's `sig:` value before key-shape scanning.
+    """Drop the known 64-byte-signature envelope values before key-shape scanning.
 
     An Ed25519 signature is exactly the shape this detector is hunting for —
-    base64 of 64 bytes — and `tracking.signature.sig` is the one place that
-    blob is *supposed* to live. Scanning it would flag every signed note as a
-    WireGuard private key. The field is stripped, not the file: a real key in
+    base64 of 64 bytes — and there are places that blob *supposed* to live:
+
+    * ``tracking.signature.sig`` in a signed note (YAML);
+    * ``signature_b64`` in a signed registry entry or approval (JSON), which is
+      the Master's own authorization signature over the identity, not a key.
+
+    Scanning either would flag every signed note and every authorized node as a
+    WireGuard private key. The values are stripped, not the files: a real key in
     the body or anywhere else still trips the detector.
     """
-    return re.sub(
+    text = re.sub(
         r'^(\s*)sig: ["\']?[A-Za-z0-9+/]{80,}={0,2}["\']?\s*$',
         r"\1sig: <envelope-signature>",
         text,
         flags=re.M,
+    )
+    return re.sub(
+        r'("signature_b64"\s*:\s*")[A-Za-z0-9+/]{80,}={0,2}(")',
+        r"\1<envelope-signature>\2",
+        text,
     )
 
 
@@ -550,3 +560,75 @@ def test_wg_key_shape() -> None:
     """Sanity: a 32-byte key base64-encodes to the 44-char form wg expects."""
     assert len(base64.b64encode(bytes(32))) == 44
     assert WG_KEY_RE.match(FAKE_PRIVATE_KEY)
+
+
+# --- userspace bring-up: surviving a reboot without the kernel module --------
+#
+# The Jetson/L4T hosts this overlay runs on ship `CONFIG_WIREGUARD=n`, so
+# `wg-quick` cannot create the interface and its userspace fallback hangs in
+# `wg setconf`. Left unhandled, a reboot leaves the node with no overlay. These
+# assert the replacement sequence exists and that the anchor delegates to it.
+
+BRINGUP = VAULT_ROOT / "scripts" / "sparknet-wg-bringup.sh"
+ANCHOR = VAULT_ROOT / "scripts" / "sparknet-wireguard-anchor.sh"
+
+
+def test_bringup_helper_exists_and_is_executable() -> None:
+    assert BRINGUP.is_file()
+    assert os.access(BRINGUP, os.X_OK)
+
+
+def test_bringup_handles_hosts_without_the_kernel_module() -> None:
+    text = BRINGUP.read_text()
+    assert "type wireguard" in text, "must probe for the kernel module"
+    assert "wireguard-go" in text, "must fall back to userspace wireguard-go"
+    assert "/var/run/wireguard/" in text, "must wait for the userspace UAPI socket"
+    assert "wg setconf" in text
+
+
+def test_bringup_caps_the_userspace_setconf_that_does_not_return() -> None:
+    """On wireguard-go, `wg setconf` can apply and then hang, so it is capped and
+    the applied result is confirmed with `wg show` rather than its exit status."""
+    text = BRINGUP.read_text()
+    assert "timeout 10 wg setconf" in text
+    assert "wg show" in text
+
+
+def test_bringup_requires_an_interface() -> None:
+    proc = subprocess.run([str(BRINGUP)], capture_output=True, text=True, check=False, timeout=60)
+    assert proc.returncode != 0
+    assert "--iface" in (proc.stdout + proc.stderr)
+
+
+def test_anchor_delegates_to_the_bringup_helper_not_wg_quick() -> None:
+    text = ANCHOR.read_text()
+    assert "wg-quick up" not in text, "wg-quick cannot bring the overlay up on a kernel-module-less host"
+    assert "sparknet-wg-bringup.sh" in text
+    assert "10.100.0.1/32" in text, "a /32 overlay address needs an explicit host route to the Master"
+
+
+def test_anchor_unlocks_a_previously_pinned_config_before_rendering() -> None:
+    """A chattr +i config would make the render's atomic replace fail at boot."""
+    text = ANCHOR.read_text()
+    assert "chattr -i" in text
+    assert text.index("chattr -i") < text.index("sparknet-wireguard-render.sh"), (
+        "the config must be unlocked before the render replaces it"
+    )
+
+
+def test_anchor_repins_on_failure_so_a_failed_run_never_leaves_it_writable() -> None:
+    """A mid-sequence failure must re-pin, or the node could drop its Master link.
+
+    The anchor unlocks the config, then renders, installs and brings up. If any
+    step between the unlock and the final pin fails under `set -e`, the script
+    exits with the live config writable — the exact state `chattr +i` exists to
+    prevent. An EXIT trap must restore the pin.
+    """
+    text = ANCHOR.read_text()
+    assert "trap " in text, "the anchor must install an EXIT trap to re-pin on failure"
+    trap_line = next((ln for ln in text.splitlines() if ln.strip().startswith("trap ")), "")
+    assert "EXIT" in trap_line, f"the trap must fire on EXIT, got: {trap_line!r}"
+    # The trap handler's own body must set the immutable bit.
+    handler_name = trap_line.split()[1]
+    handler_body = text.split(f"{handler_name}()", 1)[1].split("\n}", 1)[0]
+    assert "chattr +i" in handler_body, f"the {handler_name} handler must re-pin the config on a non-zero exit"

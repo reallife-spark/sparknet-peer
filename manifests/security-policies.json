@@ -11,7 +11,7 @@
   },
   "approval_granularity": "per-file-per-command",
   "high_impact_paths": [
-    "/etc/wireguard/wg0.conf",
+    "/etc/wireguard/wg1.conf",
     "/etc/netplan/00-sparknet-interfaces.yaml",
     "/etc/netplan/02-sparknet-wifi-backup.yaml"
   ],

@@ -14,7 +14,7 @@ import pytest
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = VAULT_ROOT / "manifests" / "critical-manifest.json"
 
-KNOWN_EXTERNAL = {"/etc/wireguard/wg0.conf"}
+KNOWN_EXTERNAL = {"/etc/wireguard/wg1.conf"}
 
 
 @pytest.fixture
@@ -71,10 +71,10 @@ def test_wireguard_provenance_is_now_generated(manifest: dict) -> None:
     generated. If this test fails, either the renderer or the map is missing.
     """
     unmapped = {e["installed_path"] for e in manifest["source_of_truth"]["unmapped"]}
-    assert "/etc/wireguard/wg0.conf" not in unmapped, "wireguard is no longer an unmapped gap"
+    assert "/etc/wireguard/wg1.conf" not in unmapped, "wireguard is no longer an unmapped gap"
 
     generated = {e["installed_path"]: e for e in manifest["source_of_truth"]["generated"]}
-    entry = generated.get("/etc/wireguard/wg0.conf")
+    entry = generated.get("/etc/wireguard/wg1.conf")
     assert entry is not None, "wireguard must have a provenance entry"
     assert entry["vault_path"] == "configs/wireguard/wg0-node.conf.template"
     assert entry.get("rendered_by") == "scripts/sparknet-wireguard-render.sh"

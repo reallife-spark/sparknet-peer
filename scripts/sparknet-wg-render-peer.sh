@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Render peer wg0.conf from registry (peer side view).
+# Render peer <iface>.conf from registry (peer side view). IFACE defaults to wg0
+# and follows SPARKNET_WG_INTERFACE when the overlay interface is overridden.
 set -euo pipefail
 
 ROLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +10,7 @@ REG=""
 OUT="/dev/stdout"
 usage() {
   cat <<'USAGE'
-usage: sparknet-wg-render-peer.sh --registry <registry.json> [--out <wg0.conf>]
+usage: sparknet-wg-render-peer.sh --registry <registry.json> [--out <iface.conf>]
 USAGE
 }
 while [ $# -gt 0 ]; do

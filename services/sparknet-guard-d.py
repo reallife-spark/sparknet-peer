@@ -305,33 +305,77 @@ def apply_patch(path: Path, content: bytes, *, dry_run: bool = False) -> None:
         raise
     except OSError as exc:
         raise Refusal(500, "write_failed", str(exc)) from exc
-    finally:
-        # Always attempt to restore immutability, even if the write failed.
-        with contextlib.suppress(Refusal):
-            _run(["chattr", "+i", str(path)], dry_run=False)
+
+    # The write succeeded, so the path must end locked. A silent failure here
+    # would leave a protected file patched but writable while the guard reports
+    # success — the one outcome the immutable bit exists to prevent. Verify with
+    # lsattr and refuse if the lock is not actually back.
+    try:
+        _run(["chattr", "+i", str(path)], dry_run=False)
+    except Refusal as exc:
+        if _is_immutable(path) is not True:
+            raise Refusal(
+                500,
+                "immutability_not_restored",
+                f"patched {path} but could not re-lock it: {exc.detail or exc.code}. "
+                f"The file is modified and no longer immutable.",
+            ) from exc
 
     print(f"[guard] patched and re-locked {path} (was_immutable={had_immutable})")
 
 
+def _is_immutable(target: Path) -> bool | None:
+    """Read the immutable flag with lsattr.
+
+    Returns True/False for the flag, or None when the flag cannot be *read*
+    (lsattr missing, or the filesystem does not support the attribute). The
+    three-way answer matters: "not immutable" and "cannot tell" must not
+    collapse into the same branch, or a filesystem with no chattr support is
+    silently treated as protected.
+    """
+    try:
+        flags = subprocess.run(["lsattr", "-d", str(target)], capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if flags.returncode != 0:
+        return None
+    head = (flags.stdout.split(" ", 1)[0] if flags.stdout else "").strip()
+    return "i" in head
+
+
 def enforce_immutability(paths: list[str], *, dry_run: bool = False) -> list[str]:
-    """Lock critical paths that are not already immutable. Standalone mode uses this."""
+    """Lock critical paths that are not already immutable. Standalone mode uses this.
+
+    Fail-closed: a path that is neither already immutable nor newly locked is an
+    error the caller must see, never a silent skip. The failure it guards against
+    is a filesystem where ``chattr`` cannot protect anything — reporting "enforced"
+    there would leave the node's protected paths writable while every surface says
+    they are locked.
+    """
     enforced: list[str] = []
     for raw in paths:
         target = Path(raw)
         if not target.exists():
             continue
-        try:
-            flags = subprocess.run(["lsattr", "-d", str(target)], capture_output=True, text=True, check=False)
-            already = "i" in (flags.stdout.split(" ", 1)[0] if flags.stdout else "")
-        except OSError:
-            already = False
+        already = _is_immutable(target)
         if already:
             continue
         try:
             _run(["chattr", "+i", str(target)], dry_run=dry_run)
-            enforced.append(raw)
-        except Refusal:
-            continue
+        except Refusal as exc:
+            # Confirm with lsattr that the file really is not immutable now. If it
+            # is (e.g. it already was, and lsattr could not read the flag), this is
+            # not a failure; otherwise chattr could not protect the path and we
+            # must refuse rather than claim success.
+            if dry_run or _is_immutable(target) is True:
+                continue
+            raise Refusal(
+                500,
+                "immutability_not_enforced",
+                f"cannot set the immutable bit on {target}: {exc.detail or exc.code} "
+                f"(the filesystem may not support chattr +i)",
+            ) from exc
+        enforced.append(raw)
     return enforced
 
 

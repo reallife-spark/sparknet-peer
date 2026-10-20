@@ -1,8 +1,11 @@
 [Unit]
-Description=Sparknet WireGuard Master Anchor (render, bring up wg0, pin it)
+Description=Sparknet WireGuard overlay anchor (render, bring up, pin)
 After=network-online.target
 Wants=network-online.target
 Before=sparknet-guard-daemon.service
+# Any container that binds the overlay address (e.g. the Master admin surface on
+# 10.100.0.1) fails to start if it comes up before the interface exists.
+Before=docker.service
 
 [Service]
 Type=oneshot

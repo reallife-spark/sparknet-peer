@@ -17,7 +17,7 @@ User=root
 # lives site-local under the *operator's* home (root's ~ would not find it), so
 # both end points are explicit here rather than left to ~ expansion.
 Environment=SPARKNET_WEBUI=http://127.0.0.1:8181
-Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/.local/state/sparknet/cluster2/webui-admin-password
+Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/sparknet/peer-node/.state/webui-admin-password
 ExecStart=/usr/local/libexec/sparknet/sparknet-vault-provisioner
 Restart=always
 RestartSec=30

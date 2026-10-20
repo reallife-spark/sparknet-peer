@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       echo "Usage: $0 [--dry-run] [--force]"
-      echo "Node containment: halts local schedulers, tears down this node's wg0, stops local"
+      echo "Node containment: halts local schedulers, tears down this node's overlay (wg0 by default), stops local"
       echo "control planes, enforces a local nftables drop (ROOT-GATED)."
       echo "Scope: THIS NODE ONLY. The cluster KillSwitch is Master-side and lives in master-node/."
       exit 0
@@ -65,7 +65,7 @@ fi
 log "INFO" "ROOT-GATED check: PASSED"
 log "INFO" "Staged teardown (template):"
 log "INFO" "  1. Halt Sparknet schedulers/agents"
-log "INFO" "  2. Tear down wg0 (WireGuard Master Anchor)"
+log "INFO" "  2. Tear down the overlay interface (WireGuard Master Anchor, wg0 by default)"
 log "INFO" "  3. Stop control planes (orchestrator/agents)"
 log "INFO" "  4. Enforce emergency nftables drop policy"
 log "INFO" "  5. Lock critical paths state"

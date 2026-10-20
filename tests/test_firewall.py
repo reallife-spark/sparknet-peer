@@ -82,3 +82,26 @@ def test_the_script_exposes_install_status_and_flush():
     text = _script_text()
     for verb in ("install)", "flush)", "status)"):
         assert verb in text, f"the script must support the {verb.rstrip(')')} verb"
+
+
+def test_install_verifies_itself_and_exposes_verify():
+    """A boot that builds a half-state must fail, not report success.
+
+    `install` is the only thing that runs at boot, and on a host missing the
+    service — or after a docker restart drops the FORWARD jump — nothing else
+    re-checks. So install verifies its own result and the script exposes a
+    standalone `verify` verb the unit runs as a second assertion.
+    """
+    text = _script_text()
+    assert "verify)" in text, "the firewall must expose a verify verb"
+    assert "verify_rules" in text, "the verify implementation must exist"
+    # install_rules must call verify_rules, or the build can succeed unverified.
+    install_body = text.split("install_rules()", 1)[1].split("\n}", 1)[0]
+    assert "verify_rules" in install_body, "install_rules must verify its own result"
+
+
+def test_the_unit_runs_verify_after_install():
+    unit = UNIT.read_text()
+    assert "ExecStartPost=/usr/local/libexec/sparknet/sparknet-firewall verify" in unit, (
+        "the unit must assert enforcement after install"
+    )

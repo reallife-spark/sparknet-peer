@@ -42,7 +42,6 @@ the branch, and the `share` verbs declare a session-view/session-handoff share
 from __future__ import annotations
 
 import argparse
-import base64
 import importlib.util
 import json
 import os
@@ -449,10 +448,9 @@ class Bridge:
 
     def decode_grant(self, token: str) -> dict[str, Any]:
         try:
-            padded = token + "=" * (-len(token) % 4)
-            raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+            raw = self.authz.decode_b64_strict(token, what="grant token", urlsafe=True)
             grant = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError, self.authz.AuthzError) as exc:
             raise _HttpRequestError(401, "missing-grant", f"Bearer must be base64url grant JSON: {exc}")
         if not isinstance(grant, dict) or not grant.get("grant_id"):
             raise _HttpRequestError(401, "missing-grant", "Bearer grant has no grant_id")

@@ -25,8 +25,8 @@ User=raxxar
 # the state dir is the node's cluster2 runtime state. Registration and the
 # snapshot happen once at start; the listener runs for the process lifetime.
 Environment=SPARKNET_WEBUI=http://127.0.0.1:8181
-Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/.local/state/sparknet/cluster2/webui-admin-password
-Environment=SPARKNET_STATE_DIR=/home/raxxar/.local/state/sparknet/cluster2
+Environment=SPARKNET_WEBUI_ADMIN_PASSWORD_FILE=/home/raxxar/sparknet/peer-node/.state/webui-admin-password
+Environment=SPARKNET_STATE_DIR=/home/raxxar/sparknet/peer-node/.state
 # 127.0.0.1:4130 only: the webhook ingress is consumed by the node's own Open
 # WebUI (host netns). No LAN/overlay listener, ever.
 ExecStart=/usr/local/libexec/sparknet/sparknet-admin-agent --register-webhooks --serve
