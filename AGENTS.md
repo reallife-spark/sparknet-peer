@@ -22,13 +22,14 @@ refuses to apply. That asymmetry is deliberate — a node that has lost its
 Master has lost its authority, and the correct response is to keep it useful
 but inert.
 
-The Master role lives in `master-node/` and its signing side is built but
-**unused**: the isolated signer exists, and Step 11 built the election that can
-elect a Master, but no node has been elected yet — nothing on disk is Master
-until the members run the ceremony and a unanimous signed cluster trust root
-lands (2 of 2 in a pair, 3 of 3 in the full cluster).
-Until then, `master-node/manifests/master-identity.json` correctly says
-`role: "peer"`.
+The Master role lives in `master-node/`, and its signing side is **deployed
+and proven live**: on 2026-10-07 a 2/2 pair co-formed a cluster trust root, the
+signer ran as `sparknet-master-signer.service`, signed a live registry and
+survived a real reboot. A node is Master because the members ran the ceremony
+and a unanimous signed cluster trust root landed (2 of 2 in a pair, 3 of 3 in
+the full cluster) — not because of anything on disk, which is why
+`master-node/manifests/master-identity.json` says `role: "peer"` until the
+ceremony does.
 
 ## Boundaries vs the Master
 
@@ -45,8 +46,21 @@ Until then, `master-node/manifests/master-identity.json` correctly says
 A peer holding the local root account can still rewrite its own machine. That
 is not a property this design can prevent — it is why the useful protections
 are the ones that do not depend on the peer's cooperation: `chattr +i` on
-protected files, the nftables egress restriction, and the requirement for a
-Master signature that simply does not exist locally.
+protected files, the host-firewall egress restriction (iptables on the deployed
+fleet), and the requirement for a Master signature that simply does not exist
+locally.
+
+## The manual
+
+[`USER_MANUAL.md`](USER_MANUAL.md) is the developer-facing manual for this
+role: what a peer is, the seven services, the 24 scripts, the nine units, the
+manifests, the vault, the gate, and how to make a change correctly. It is
+published at the root of the `sparknet-peer` repository.
+
+The **master manual** for the whole system lives in the `sparknet` repository
+as `USER_MANUAL.md`; the peer's contract and the shared implementation it
+obeys are named in prose there, because the published `sparknet-peer`
+repository carries this role and not the contract.
 
 ## Layout (numbered PARA layout; legacy names are shims)
 
@@ -114,8 +128,10 @@ the Master's signatures.
   blockers. Replace, never append indefinitely.
 - `02_Daily/YYYY-MM-DD.md` — that session's full record (`sessions/` is a shim
   to it). One file per day; sessions spanning midnight use the start date.
-- Read `MEMORY.md` and today's session file at session start; write detail only
-  to today's session file. Never back-write history into `MEMORY.md`.
+- Read `AGENTS.md`, `MISSION.md` and `INTENT.md` at session start: the charter,
+  the role's purpose and the design contract behind it. Then read `MEMORY.md`
+  and today's session file; write detail only to today's session file. Never
+  back-write history into `MEMORY.md`.
 
 ## Plan Protocol
 
@@ -168,6 +184,30 @@ Run `/wiki-status` first, then `/wiki-ingest`, `/wiki-query`, `/wiki-lint`,
 `/wiki-capture`, `/wiki-synthesize`, `/wiki-digest`, `/wiki-rebuild`,
 `/daily-update`.
 
+### Role-local skill catalog
+
+`peer-node/.opencode/skills/` is this role's addition to the base suite. It is
+the expanded engineering set and is **sellable by construction**: MIT,
+Apache-2.0, BSD, ISC, CC0/Unlicense, and the original dual MIT/Apache
+`skill-template` only. The removed proprietary and unclear names are not
+present; `kimi-*`, `docx`, `pdf`, `pptx`, `xlsx`, `powerpoint`,
+`doc-coauthoring`, `verify`, the bundled `claude-api` and
+`malware-analysis-static` are excluded.
+
+The catalog is generated; do not hand-edit it. Counts, licenses, source paths
+and hashes are in `.opencode/skills/.inventory.json`. Refresh with
+`make skills-sync`; verify with `make skills-check`. The bundle check runs the
+same manifest check on an extracted node.
+
+## Templates
+
+| Template | Purpose |
+| --- | --- |
+| `deployment/vault-template/` | Starter `00_System/` set for a fresh vault (`cp` + `make user-init`). |
+| `manifests/node-template-manifest.json` | Identity manifest skeleton populated at provisioning. |
+| `configs/wireguard/wg0-node.conf.template` | Peer WireGuard stanza (see `docs/wireguard.md`). |
+| `agents/template.sparknet-agent@.service` | Per-agent systemd unit template for role agents. |
+
 ## Boundaries
 
 - **Scope discipline.** This vault holds peer-role sparknet knowledge. Master
@@ -178,7 +218,7 @@ Run `/wiki-status` first, then `/wiki-ingest`, `/wiki-query`, `/wiki-lint`,
 - **Offensive security is out of scope** for a general/default agent session.
   Route offensive work to the `red` role and defensive work to `blue`.
 - Cite sources. A distilled page without provenance is a guess — mark it as one.
-- **Do not claim live verification** of WireGuard, nftables, `chattr +i`,
+- **Do not claim live verification** of WireGuard, iptables, `chattr +i`,
   KillSwitch or systemd behaviour. This host has none of them; those are
   privileged-target-node checks and are listed as unverified in
   `docs/wireguard.md`.

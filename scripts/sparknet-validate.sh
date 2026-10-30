@@ -22,7 +22,8 @@ echo "  fabric root:     $SPARKNET_FABRIC_ROOT"
 echo
 
 echo "--- required peer files ---"
-for f in manifests/node-identity.json \
+for f in AGENTS.md MISSION.md INTENT.md \
+         manifests/node-identity.json \
          manifests/node-authorizations.json \
          manifests/critical-manifest.json \
          manifests/security-policies.json \

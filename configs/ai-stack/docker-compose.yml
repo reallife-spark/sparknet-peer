@@ -36,7 +36,7 @@ services:
   # loopback-only dispatch bridge. Ollama and ChromaDB are the node's infra
   # containers, both reachable on `127.0.0.1` through their published ports.
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:${WEBUI_TAG:-v0.12.2}
     container_name: sparknet-webui
     restart: unless-stopped
     # Shares the host netns (LLM: the bridge is loopback-only). LAN + overlay

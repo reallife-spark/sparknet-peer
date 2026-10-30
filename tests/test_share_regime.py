@@ -480,3 +480,181 @@ def test_the_manifest_and_engine_agree_on_the_contract_types() -> None:
     manifest = json.loads((VAULT_ROOT / "manifests" / "share-regime.json").read_text())
     assert set(regime.share_types) == set(manifest["share_types"])
     assert set(regime.durations) == set(manifest["clocks"])
+
+
+# --- Step 66B: the department boundary ----------------------------------------
+#
+# A department is Master-attested in the signed registry, so the tests inject a
+# lookup rather than letting a node declare its own. That injection *is* the
+# point: nothing here can be persuaded by what a counterpart says about itself.
+
+XDEPT = engine.CROSS_DEPARTMENT_CAPABILITY
+
+
+def _departments(mapping: dict[str, str | None]) -> Callable[[str], str | None]:
+    """Stand-in for reading `department` out of the Master-signed registry."""
+    return lambda node_id: mapping.get(node_id)
+
+
+def _caps(held: dict[str, set[str]]) -> Callable[[str, str], bool]:
+    return lambda node_id, cap: cap in held.get(node_id, set())
+
+
+def _dept_pair(
+    clock: Clock,
+    departments: dict[str, str | None],
+    *,
+    alice_caps: set[str] = frozenset(),
+    bob_caps: set[str] = frozenset(),
+):
+    kwargs = {
+        "node_count": _count([2]),
+        "durations": FAST,
+        "contracts_dir": CONTRACTS,
+        "department_of": _departments(departments),
+        "holds_capability": _caps({"alice": set(alice_caps), "bob": set(bob_caps)}),
+    }
+    return engine.Regime("alice", now=clock, **kwargs), engine.Regime("bob", now=clock, **kwargs)
+
+
+def test_the_capability_checked_is_the_one_the_contract_declares() -> None:
+    """The engine must not invent its own spelling of the grant it requires."""
+    caps = json.loads((CONTRACTS / "capabilities.json").read_text())
+    assert XDEPT in caps["known_capabilities"]
+    assert XDEPT in caps["definitions"]
+    assert caps["definitions"][XDEPT]["holder"] == "peer"
+    assert caps["definitions"][XDEPT]["sensitive"] is True, (
+        "crossing a department boundary is the holder's risk, so it must be in the sensitive set"
+    )
+
+
+def test_a_share_inside_one_department_needs_no_extra_capability() -> None:
+    clock = Clock()
+    a, b = _dept_pair(clock, {"alice": "research", "bob": "research"})
+    share_id, _acts = _share_roundtrip(a, b, clock)
+    assert a.get(share_id)["state"] in ("open", "ratified", "idle")
+    assert a.get(share_id)["departments"]["crosses"] is False
+
+
+def test_crossing_departments_is_refused_at_the_offer() -> None:
+    clock = Clock()
+    a, _b = _dept_pair(clock, {"alice": "research", "bob": "finance"})
+    with pytest.raises(engine.ShareError) as exc:
+        a.offer("kb-view", toward="bob")
+    assert exc.value.status == 403 and exc.value.reason == "cross-department"
+    assert XDEPT in exc.value.detail
+
+
+def test_crossing_departments_proceeds_with_the_capability() -> None:
+    clock = Clock()
+    a, b = _dept_pair(clock, {"alice": "research", "bob": "finance"}, alice_caps={XDEPT}, bob_caps={XDEPT})
+    offer = a.offer("kb-share", toward="bob")
+    recorded = a.get(offer["share_id"])["departments"]
+    assert recorded["crosses"] is True
+    assert recorded["permitted_by"] == XDEPT
+    assert recorded["mine"] == "research" and recorded["theirs"] == "finance"
+    b.dispatch(offer)
+    accept = b.accept(offer["share_id"], "kb-share")
+    a.dispatch(accept)
+    assert a.get(offer["share_id"])["state"] in ("open", "ratified", "idle")
+
+
+def test_the_acceptor_enforces_its_own_boundary_not_the_senders() -> None:
+    """Each side checks its own grant, because the offer crossed a wire.
+
+    Alice holds the capability and may offer; Bob does not, so Bob may not
+    accept. Trusting the sender's view would let one granted node pull an
+    ungranted one across the boundary.
+    """
+    clock = Clock()
+    a, b = _dept_pair(clock, {"alice": "research", "bob": "finance"}, alice_caps={XDEPT})
+    offer = a.offer("kb-view", toward="bob")
+    b.dispatch(offer)
+    with pytest.raises(engine.ShareError) as exc:
+        b.accept(offer["share_id"], "kb-view")
+    assert exc.value.status == 403 and exc.value.reason == "cross-department"
+
+
+def test_an_unattested_department_binds_nothing() -> None:
+    """Where the Master attested none, there is no boundary to cross.
+
+    A fresh deployment shares exactly as it did before this rule existed, rather
+    than needing a grant nobody has issued yet — and the safe default is the one
+    that changes nothing until an attestation does.
+    """
+    clock = Clock()
+    a, b = _dept_pair(clock, {"alice": "research", "bob": None})
+    share_id, _acts = _share_roundtrip(a, b, clock)
+    assert a.get(share_id)["departments"]["crosses"] is False
+    assert a.get(share_id)["state"] in ("open", "ratified", "idle")
+
+
+def test_a_node_with_no_attestation_at_all_is_unaffected() -> None:
+    clock = Clock()
+    a, b = _dept_pair(clock, {})
+    share_id, _acts = _share_roundtrip(a, b, clock)
+    assert a.get(share_id)["departments"] == {
+        "counterpart": "bob",
+        "mine": None,
+        "theirs": None,
+        "crosses": False,
+        "permitted_by": None,
+    }
+
+
+def test_an_inbound_cross_department_offer_is_recorded_not_erased() -> None:
+    """Bob records the attempt even though he will refuse it.
+
+    An offer refused silently leaves no evidence it was made, and the evidence is
+    the point: the flag a reviewer wants is exactly the one where someone tried.
+    """
+    clock = Clock()
+    a, b = _dept_pair(clock, {"alice": "research", "bob": "finance"}, alice_caps={XDEPT})
+    offer = a.offer("kb-view", toward="bob")
+    b.dispatch(offer)
+    seen = b.get(offer["share_id"])
+    assert seen["departments"]["crosses"] is True
+    assert seen["departments"]["permitted_by"] is None, "Bob holds nothing; the record says so"
+    assert seen["state"] == "invite"
+    with pytest.raises(engine.ShareError):
+        b.accept(offer["share_id"], "kb-view")
+
+
+def test_the_offer_event_log_carries_the_department_decision() -> None:
+    clock = Clock()
+    a, _b = _dept_pair(clock, {"alice": "research", "bob": "finance"}, alice_caps={XDEPT}, bob_caps={XDEPT})
+    offer = a.offer("kb-view", toward="bob")
+    events = a.get(offer["share_id"])["event_log"]
+    assert events[0]["event"] == "offer"
+    assert events[0]["departments"]["crosses"] is True
+    assert events[0]["departments"]["permitted_by"] == XDEPT
+
+
+def test_a_solo_node_has_no_counterpart_and_so_no_boundary() -> None:
+    clock = Clock()
+    a = engine.Regime(
+        "alice",
+        now=clock,
+        node_count=_count([1]),
+        durations=FAST,
+        contracts_dir=CONTRACTS,
+        department_of=_departments({"alice": "research"}),
+        holds_capability=_caps({}),
+    )
+    offer = a.offer("kb-view")
+    assert a.get(offer["share_id"])["departments"]["crosses"] is False
+
+
+def test_a_narrower_type_still_needs_the_capability() -> None:
+    """Narrowing the share type does not narrow the department boundary.
+
+    The type says what a share conveys; the department says who may share at all.
+    Letting kb-view slip through because it copies nothing would make the
+    boundary depend on the least sensitive choice available.
+    """
+    clock = Clock()
+    a, _b = _dept_pair(clock, {"alice": "research", "bob": "finance"})
+    for kind in ("kb-view", "kb-share", "session-view", "session-handoff", "full"):
+        with pytest.raises(engine.ShareError) as exc:
+            a.offer(kind, toward="bob")
+        assert exc.value.reason == "cross-department", kind

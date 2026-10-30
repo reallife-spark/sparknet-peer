@@ -39,6 +39,8 @@ Links on this page are wikilinks so they resolve whether the page is opened as
 
 ## Where to start
 
+- Why this role exists: [[MISSION]]
+- The design contract and first-deployment expectations: [[INTENT]]
 - Session memory: `MEMORY.md`, then `02_Daily/<today>.md`
 - Work in flight: `PLAN.md` — terminal (`current: done`); new peer work gets
   a **new** step

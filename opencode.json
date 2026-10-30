@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "MISSION.md",
+    "INTENT.md",
+    "00_System/alpha-agent.md"
+  ],
+  "references": {
+    "knowledge": {
+      "path": ".",
+      "description": "The peer-node knowledge vault. Use for this role's scope, design intent, operating rules, plans and decisions."
+    }
+  },
+  "permission": {
+    "edit": {
+      "*": "allow",
+      "../master-node/**": "deny",
+      "../master-node/.state/**": "deny",
+      ".state/keys/**": "deny",
+      "../contracts/**": "deny",
+      "../shared/**": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "*master-node/.state/keys*": "deny",
+      "*signer.sock*": "deny"
+    }
+  }
+}

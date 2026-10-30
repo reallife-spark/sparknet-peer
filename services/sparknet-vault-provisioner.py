@@ -14,9 +14,9 @@ vault for every approved account:
 For each new account it:
   1. materialises a **knowledge-vault slice** of the peer-node template at
      `/srv/sparknet/knowledge/peer-<user_id>/` (numbered categories, shims,
-     AGENTS.md, docs, schema — never `.state/`, `blockchain/`, `services/`,
-     `scripts/`, `container/`, `configs/`, `tests/`, `manifests/`, `.git/`,
-     and never the template's own `.env`),
+     AGENTS.md, MISSION.md, INTENT.md, docs, schema — never `.state/`,
+     `blockchain/`, `services/`, `scripts/`, `container/`, `configs/`,
+     `tests/`, `manifests/`, `.git/`, and never the template's own `.env`),
   2. regenerates the copy's `.env` with `VAULT_PATH` pointed at the copy,
   3. creates the user's KB in Open WebUI (admin token; access grant `read` to
      that user),
@@ -111,6 +111,7 @@ SLICE_INCLUDED_TOP = frozenset(
         "_staging",
         "AGENTS.md",
         "MISSION.md",
+        "INTENT.md",
         "docs",
         "audit",
         "_archives",

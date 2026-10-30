@@ -22,8 +22,8 @@ PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),$(if $(wildcard $(FABRIC_VENV_PY)),
 
 .PHONY: help env-init validate test lint devtools provision dist bundle install-units \
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
-        peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture clean \
-        provenance-verify user-init provenance-append ingest precommit shims-check keys-check \
+        peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture skills-sync skills-check clean \
+        provenance-verify user-init provenance-append ingest accept-inbox review-inbox precommit shims-check keys-check \
         ai-stack-config admin-agent-help container-build container-load container-config container-preflight container-up \
         container-health container-down model-generate model-verify model-build model-serve
 
@@ -119,8 +119,8 @@ anchor: ## Bring up the WireGuard Master Anchor (root; render + wg-quick up + ch
 
 containment: ## THIS NODE's root-gated teardown. Not the cluster KillSwitch (Master-side).
 	@echo "This tears down only this node's anchor. The cluster KillSwitch is a Master"
-	@echo "action and is specified in master-node/docs/master-killswitch.md — it does not"
-	@echo "exist yet. Continuing with node-local containment in 3s (Ctrl-C to abort)."
+	@echo "action (master-node/services/sparknet-killswitch.py) and this role has no"
+	@echo "copy or target for it. Continuing with node-local containment in 3s (Ctrl-C to abort)."
 	@sleep 3
 	@./scripts/sparknet-node-containment.sh $(if $(DRY_RUN),--dry-run,)
 
@@ -177,13 +177,27 @@ ingest: ## Land STDIN or SRC= as an unsigned note in 01_Inbox/ (SOURCE=master-no
 		--source "$(if $(SOURCE),$(SOURCE),peer-node)" \
 		$(if $(SENDER),--sender "$(SENDER)",)
 
+accept-inbox: ## Record an inbox acceptance (ITEM=01_Inbox/... SOURCE=... [REVIEWER=... SANITIZED=1])
+	@test -n "$(ITEM)"   || { echo "ITEM=01_Inbox/<item>.md required" >&2; exit 1; }
+	@test -n "$(SOURCE)" || { echo "SOURCE=peer-node|email|master-node required" >&2; exit 1; }
+	@$(PROV_PY) $(PROV) $(PROV_VAULT) accept-inbox "$(ITEM)" --source "$(SOURCE)" \
+		--decision "$(if $(DECISION),$(DECISION),accepted)" \
+		$(if $(REVIEWER),--reviewer "$(REVIEWER)",) \
+		$(if $(SANITIZED),--sanitized,) $(if $(SENDER),--sender "$(SENDER)",) \
+		$(if $(NOTE),--note $(NOTE),)
+
+review-inbox: ## Sanitize an accepted untrusted item (ITEM=... [APPLY=1] [ALLOW_INSTRUCTIONS=1])
+	@test -n "$(ITEM)" || { echo "ITEM=01_Inbox/<item>.md required" >&2; exit 1; }
+	@$(PY) "$(VAULT_ROOT)/agents/vault-curator/agent.py" review --vault "$(VAULT_ROOT)" "$(ITEM)" \
+		$(if $(APPLY),--apply,) $(if $(ALLOW_INSTRUCTIONS),--allow-instructions,)
+
 shims-check: ## Prove every legacy name is a symlink to its numbered home
 	@$(PROV_PY) $(PROV) $(PROV_VAULT) shims
 
 keys-check: ## No key material tracked; state-dir keys are 0600
 	@$(FABRIC_ROOT)/scripts/sparknet-keys-check.sh "$(VAULT_ROOT)"
 
-precommit: keys-check ## keys-check + secret scan + provenance-verify --strict
+precommit: keys-check skills-check ## keys-check + skill manifest + secret scan + provenance-verify --strict
 	@$(PROV_PY) $(PROV) $(PROV_VAULT) scan
 	@$(PROV_PY) $(PROV) $(PROV_VAULT) verify --strict
 	@echo "precommit: clean"
@@ -209,15 +223,30 @@ wiki-capture: ## Preflight, then /wiki-capture (--quick for a raw drop)
 	@source "$(FABRIC_ROOT)/scripts/sparknet-wiki-env.sh"
 	@echo "Run /wiki-capture in opencode to persist a finding from this session."
 
+skills-sync: ## Rebuild this role's local skill catalog
+	@$(PY) $(FABRIC_ROOT)/scripts/sync-role-skills.py --apply --role peer
+
+skills-check: ## Verify this role's skill catalog, licenses and manifest
+	@$(PY) $(FABRIC_ROOT)/scripts/sync-role-skills.py --check --role peer
+
 clean: ## Remove caches and build output
 	@find "$(VAULT_ROOT)" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf "$(VAULT_ROOT)/.pytest_cache" "$(VAULT_ROOT)/dist"
 	@echo "Cleaned caches and dist/ (left .venv, .state and .cache alone)."
 # --- peer registry/wg helpers ---
-.PHONY: registry-fetch registry-verify-peer wg-render-peer
+.PHONY: registry-fetch registry-status registry-verify-peer wg-render-peer
 
-registry-fetch:
-	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh
+# The live channel is the Master pushing a signed publication to the guard on
+# 9090. This target is the offline path: install one the Master delivered, or an
+# operator carried to a node whose guard is not running yet. Same acceptance
+# rule as the guard (shared/sparknet-registry-install.py).
+registry-fetch: ## install a signed registry publication (PUBLICATION=... [DRY_RUN=1])
+	@test -n "$(PUBLICATION)" || (echo "PUBLICATION=<publication.json> required" >&2; exit 1)
+	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh --publication "$(PUBLICATION)" \
+	  $(if $(DRY_RUN),--dry-run) $(if $(JSON),--json)
+
+registry-status: ## installed publication sequence and this node's capabilities
+	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh --status
 
 registry-verify-peer: ## verify registry (needs REGISTRY)
 	@test -n "$(REGISTRY)" || (echo "REGISTRY=<registry.json> required" >&2; exit 1)
@@ -227,8 +256,6 @@ wg-render-peer: ## render peer wg (needs REGISTRY)
 	@test -n "$(REGISTRY)" || (echo "REGISTRY=<registry.json> required" >&2; exit 1)
 	@$(ROLE_ROOT)/scripts/sparknet-wg-render-peer.sh --registry "$(REGISTRY)" $(if $(OUT),--out $(OUT))
 
-# reference for wiring
-# sparknet-registry-client.py wired via registry-fetch target
 
 # --- election ---
 .PHONY: election-request

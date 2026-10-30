@@ -1,7 +1,7 @@
 ---
 title: sparknet peer-node Plan
-updated: 2026-10-12
-current: done
+updated: 2026-10-26
+current: 11
 ---
 
 # sparknet peer-node — Active Plan
@@ -531,7 +531,7 @@ current: done
 
 ## Step 11 — Per-user knowledge vaults (`peer-<user_id>`) and user KBs
 
-- [x] **Step 11** — Every approved Open WebUI user on a node gets a copy of the
+- [ ] **Step 11** — Every approved Open WebUI user on a node gets a copy of the
       `peer-node` **knowledge-vault slice** at `/srv/sparknet/knowledge/peer-<user_id>/`,
       created when the node admin Accepts their signup (role `pending` → `user`),
       connected to that user's Open WebUI as a knowledge base they own and grow.
@@ -552,14 +552,17 @@ current: done
         grant shape and exclusion list on a fixture vault; (4) a re-indexer
         records a per-copy content digest and re-embeds changed pages; (5) the
         `master-<id>` copy rule is encoded (elected-Master + admin signed in)
-        and is **inactive on `.131`** — users on the Master node and admins on
-        peer nodes all get `peer-` copies; (6) tests green, `make contract-test`
+        and is **inactive on the current Master (`agx32`)** — users on the
+        Master node and admins on peer nodes all get `peer-` copies; (6) tests
+        green, `make contract-test`
         + `lint` green, bundle-verify rc=0.
-      - **Status**: in progress. Design doc `PER_USER_VAULTS_DESIGN.md` written;
-        Open WebUI 0.12.0 API surface confirmed on `.131` (KB create,
-        `knowledge/<id>/file/add`, `access_grants` dict shape, admin-token
-        grants). Deployment on a real signup+Accept cycle is
-        `DoD: confirm: user`.
+      - **Status**: **reopened 2026-10-26.** Code, tests and unit are built;
+        Open WebUI 0.12.0 API surface was confirmed on the retired cluster2
+        `.131` (KB create, `knowledge/<id>/file/add`, `access_grants` dict shape,
+        admin-token grants), and `.133` produced a `peer-<id>` KB at 20 pages
+        after two slow-embed timeouts. That proves the retired pair, not the
+        current `agx64` peer / `agx32` Master pair. A real signup → Accept →
+        provisioning cycle on the current pair is `DoD: confirm: user`.
 
 ## Step 12 — Node admin agent: auth events + pending-signup supervision
 
@@ -583,9 +586,11 @@ current: done
         provisioning gate; (5) `manifests/ai-stack.json` records the new
         approval posture; (6) tests + `make contract-test` + `lint` green,
         bundle-verify rc=0.
-      - **Status**: **complete 2026-10-12** — cursor advanced to `done`. Code +
-        gates landed earlier; the live deployment on the cluster2 pair is
-        user-confirmed (fabric Step 29 Phase 5): the agent runs as the node user
+      - **Status**: **code complete 2026-10-12**; cursor is now Step 11 pending
+        its current-pair live leg. Code +
+        gates landed earlier; the live deployment on the **retired cluster2**
+        pair was user-confirmed (fabric Step 29 Phase 5): the agent runs as the
+        node user
         (`raxxar`, not root), registers its auth-event webhook on
         `127.0.0.1:4130`, ingests `auth.*`/`user.role_updated` to the 0600 spool,
         and the Master's console read it over the signed `/admin/*` route

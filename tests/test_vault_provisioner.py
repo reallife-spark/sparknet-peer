@@ -40,6 +40,7 @@ ALLOWED_TRACKED_IN_COPY = {
     "07_Archives",
     "AGENTS.md",
     "MISSION.md",
+    "INTENT.md",
     "audit",
     "docs",
 }

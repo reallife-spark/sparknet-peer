@@ -3,6 +3,19 @@
   "unattended_mutations_allowed": false,
   "require_plan_permission_execute": true,
   "deny_root_escalation_attempts": true,
+  "operator_os_ceiling": {
+    "authority": "the `operator_os` block inside the signed session grant (contracts/identity-schema.json grant.fields.operator_os)",
+    "decides": "whether an agent acting for this session may perform a mutation that needs privilege on this computer",
+    "attestation_authorises": true,
+    "attestation_authorises_note": "Operator decision 2026-10-24. A grant minter is trusted - minting is master-side or an offline operator act and operator_os is inside the signature - so an attested is_root:true permits what root may do even when the serving daemon runs as somebody else. The ceiling travels with the human, not with the process.",
+    "never_the_daemon_uid": "the check does not read the serving process's own uid. A bridge or WebUI container started as root must not thereby hand every session root.",
+    "unattested": "fail closed. operator_os:null means nobody vouched for this session's OS identity, so a privileged mutation is refused; null is never read as root.",
+    "is_root_not_inferred": "read as the recorded boolean, never derived from uid==0 - the two can disagree, and a disagreement is not something an enforcement check may guess about",
+    "unprivileged_operations": "always allowed; the ceiling binds privilege, not ordinary use of the node",
+    "relation_to_guard_euid_0": "complementary, not redundant. The guard's apply_requires euid_0 is about whether the process can physically perform the mutation (lift chattr +i, write, re-pin); this is about whether the human driving the session is permitted to ask for it. Both must hold - an attestation authorises the request, and the daemon still needs the privilege to carry it out.",
+    "rule": "shared/sparknet-authz.py::operator_os_authorises - one implementation, so a second rule cannot drift from it",
+    "enforcement_status": "the rule is implemented and tested but not yet wired to a mutating path. The privileged filesystem mutation happens through the guard-apply envelope, whose GUARD_APPROVAL_FIELDS carry no operator identity, so enforcing this at the guard needs that envelope to carry the attestation - a second signed-envelope change. See PLAN Step 66D-ii."
+  },
   "replay_protection": {
     "require_nonce": true,
     "require_request_id": true,
@@ -48,7 +61,7 @@
     "tracked_files": ["configs/wireguard/wg0-node.conf.template", "configs/wireguard/master-peer.template"],
     "private_keys_in_vault": false,
     "teardown": "Master revocation, or the root-gated KillSwitch. Never a plain systemctl stop.",
-    "wlan_egress": "restricted to 10.100.0.1 only, so revocation leaves a revoked node without egress by design",
-    "unverified_on_dev_host": ["live handshake", "PersistentKeepalive behaviour", "chattr +i enforcement", "nftables enforcement"]
+    "wlan_egress": "the deployed peer uses iptables SPARKNET-FW chains for its published surfaces; it does not pin all WLAN egress to 10.100.0.1. Revocation removes the overlay and signed path, leaving the node inert for guarded actions, not offline.",
+    "unverified_on_dev_host": ["live handshake", "PersistentKeepalive behaviour", "chattr +i enforcement", "host firewall enforcement (iptables on the deployed fleet; the wlan-guard template emits nftables and is not applied)"]
   }
 }

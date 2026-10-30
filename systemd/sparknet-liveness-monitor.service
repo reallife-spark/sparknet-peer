@@ -1,0 +1,30 @@
+# The peer's liveness probe and claim — presence evidence, never authority.
+#
+# Runs as the node user: it reads the vault's manifests, binds the peer's own
+# overlay address on the contracted non-serving probe port (4211), and pushes a
+# `kind=liveness` telemetry report when the Master-signed registry grants
+# `telemetry`. The listener accepts a connection and closes it without reading
+# or writing a byte, so watching this node cannot make any serving path work.
+#
+# It needs the overlay to bind; without wg0 it exits non-zero and restarts,
+# rather than falling back to a wildcard. Enable it with:
+#   systemctl --user enable --now sparknet-liveness-monitor.service
+
+[Unit]
+Description=Sparknet liveness probe and claim (peer presence, no authority)
+After=network-online.target sparknet-wireguard-anchor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sparknet-liveness-monitor
+# The anchor is a root system unit and a user unit cannot order itself after a
+# system unit at boot: the restart policy is the real guard until wg0 exists.
+Restart=on-failure
+RestartSec=10s
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

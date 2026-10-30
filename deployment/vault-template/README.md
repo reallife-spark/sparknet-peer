@@ -47,8 +47,10 @@ vault through the wiki skills and every page lands there silently.
 - **The rules file** — `alpha-agent.md` / `alpha-admin.md` is role-specific
   in substance (write permissions, boundaries, verification claims). Copy it
   from an existing role and edit it; do not invent one from this template.
-- **`AGENTS.md`, `MEMORY.md`, `PLAN.md`** — the charter, standing state and
-  plan cursor live at the role root, not in `00_System/`.
+- **`AGENTS.md`, `MISSION.md`, `INTENT.md`, `MEMORY.md`, `PLAN.md`** — the
+  charter, purpose, design contract, standing state and plan cursor live at the
+  role root, not in `00_System/`. They ship with the role bundle, so a fresh
+  deployment has them before the first note is signed.
 - **Key material of any kind.** The template is scanned by
   `make keys-check` and the provenance `scan` like every other tracked file;
   keys only ever land in `$SPARKNET_STATE_DIR/keys/` at 0600.

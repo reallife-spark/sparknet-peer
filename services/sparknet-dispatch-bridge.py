@@ -47,7 +47,10 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.parse
+import urllib.request
+import uuid
 
 try:  # Python 3.9+
     from collections.abc import Callable
@@ -62,7 +65,16 @@ from typing import Any
 STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "DENIED", "ERROR"]
 DEFAULT_PORT = 4096
 DEFAULT_BIND = "127.0.0.1"
-PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/", "/admin/")
+PLAIN_PREFIXES = (
+    "/v1/models",
+    "/v1/chat/completions",
+    "/v1/openapi.json",
+    "/v1/reflex/",
+    "/v1/cluster/",
+    "/session/",
+    "/vault/",
+    "/admin/",
+)
 #: The local personality of the bridge. These routes inject the caller's user
 #: environment profile (OpenAI proxy), carry grant-keyed sessions, or read/write
 #: the node's own vault — so they must never be reachable from the overlay. When
@@ -70,7 +82,14 @@ PLAIN_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/se
 #: ``/admin/*`` to the Master), naming them here makes the shared transport refuse
 #: an overlay source with 403 before the request is read. ``/admin/*`` is
 #: deliberately absent: it is the one surface meant to be overlay-reachable.
-LOCAL_ONLY_PREFIXES = ("/v1/models", "/v1/chat/completions", "/v1/openapi.json", "/session/", "/vault/")
+LOCAL_ONLY_PREFIXES = (
+    "/v1/models",
+    "/v1/chat/completions",
+    "/v1/openapi.json",
+    "/v1/reflex/",
+    "/session/",
+    "/vault/",
+)
 ADMIN_PREFIX = "/admin/"
 ADMIN_REPLAY_TTL_SECONDS = 300
 SESSION_SCHEMA = "sparknet-session/2"
@@ -355,6 +374,15 @@ def _rel_of(raw: str) -> PurePosixPath:
     return path
 
 
+def _reflex_local_timeout(default: float = 10.0) -> float:
+    """The local-LLM timeout; a bad or non-positive value falls back safely."""
+    try:
+        value = float(os.environ.get("SPARKNET_REFLEX_LOCAL_TIMEOUT", str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 class _HttpRequestError(Exception):
     """A refusal that maps straight to an HTTP status and the stable reason."""
 
@@ -391,28 +419,87 @@ class Bridge:
         self.http = _load_http()
         self.authz = self.http._load_authz()
         self.prov = _load_provenance()
+        self.reflex = _load_shared("sparknet-reflex", "sparknet_reflex_bridge", ("sparknet-reflex.py",))
         self._registry: dict[str, Any] | None = None
+        self._registry_stamp: tuple[int, int] | None = None
         self._identity: dict[str, Any] | None = None
         self._regime: Any | None = None
         self._regime_mod: Any | None = None
         self._replay: Any | None = None
         self._webui_token: str | None = None
+        self._cluster_jobs_dir = _state_dir(self.vault_root) / "cluster-jobs"
+        self._cluster_jobs_dir.mkdir(parents=True, exist_ok=True)
+        self._cluster_jobs_lock = threading.RLock()
+        self._cluster_execute_enabled = os.environ.get("SPARKNET_CLUSTER_EXECUTE_ENABLED", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+    def _registry_entry(self, node_id: str) -> dict[str, Any] | None:
+        """This node's view of one signed registry entry, looked up by node_id."""
+        for entry in self.registry().get("authorizations") or []:
+            if not isinstance(entry, dict):
+                continue
+            identity = entry.get("identity") or {}
+            if str(identity.get("node_id") or "") == node_id:
+                return entry
+        return None
+
+    def _department_of(self, node_id: str) -> str | None:
+        """The Master-attested department of a node, or None when unattested.
+
+        Read from the signed registry entry and from nowhere else. A department
+        decides who may share with whom, so a self-declared one would be the cheap
+        way into whichever department a node wanted to read — and in-department
+        sharing is the easier path, which is exactly the direction to push.
+        """
+        entry = self._registry_entry(node_id)
+        if entry is None:
+            return None
+        department = entry.get("department")
+        return str(department) if department else None
+
+    def _holds_capability(self, node_id: str, capability: str) -> bool:
+        """Whether this node's registry view grants ``capability`` to ``node_id``.
+
+        An absent entry grants nothing, which is the fail-closed default the empty
+        shipped registry already relies on.
+        """
+        entry = self._registry_entry(node_id)
+        if entry is None:
+            return False
+        return capability in (entry.get("capabilities") or [])
 
     def _share_regime(self) -> Any:
         """The one share-regime engine, built once against this node's state.
 
-        The mesh size is taken from the registry this node holds (DoD note:
-        mode is recomputed from the registry node count on every share request,
-        never cached). With the empty registry this host actually carries, the
-        mode is ``solo``: offers may be *drafted*, but acceptance is refused and
-        nothing on this host can open a cross-node share by itself.
+        The regime object is built once, but the mesh size it governs by is not:
+        ``node_count`` is ``_mesh_count``, which reads the registry on every call,
+        so ``mode_for()`` really is recomputed per share request rather than
+        frozen at construction. That used to be a captured constant, which made the
+        governance mode — and therefore whether a Master must ratify — stale for
+        the life of the process. With the empty registry this host actually
+        carries, the mode is ``solo``: offers may be *drafted*, but acceptance is
+        refused and nothing on this host can open a cross-node share by itself.
+
+        The department resolvers are wired from the same registry, so the
+        cross-department boundary the regime enforces reads Master-attested
+        values rather than anything a counterpart claims. With no attested
+        departments the boundary binds nowhere and sharing behaves as before.
         """
         if self._regime is None:
             mod = _load_regime()
             self._regime_mod = mod
-            count = 1 + len(list(self.registry().get("authorizations") or []))
             node_id = str(self.node_identity().get("node_id") or "peer-node-bridge")
-            self._regime = mod.Regime(node_id, now=self._now, node_count=lambda: count)
+            self._regime = mod.Regime(
+                node_id,
+                now=self._now,
+                node_count=self._mesh_count,
+                department_of=self._department_of,
+                holds_capability=self._holds_capability,
+            )
         return self._regime
 
     def _share_verbs(self, session: dict[str, Any]) -> tuple[Any, list[dict]]:
@@ -426,13 +513,136 @@ class Bridge:
                 regime.restore(record)
         return regime, records
 
+    # --- cluster job ingress (Seam E) + construction/placement stubs (items 4-5) ---
+
+    @staticmethod
+    def _cluster_construct(job: dict[str, Any], roster: list[str] | None = None) -> dict[str, Any]:
+        """Deterministic construction (Seam B) — stub; no dispatch."""
+        subtasks = job.get("subtasks") if isinstance(job.get("subtasks"), list) else []
+        roster = list(roster or [])
+        roster_sorted = sorted(roster) if roster else []
+        constructed = {
+            "subtasks": subtasks,
+            "roster": roster_sorted,
+            "placement": {"topology": "none", "assignments": []},
+            "truncated": False,
+        }
+        return constructed
+
+    def cluster_job_submit(self, body: dict[str, Any], _grant: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            raise _HttpRequestError(400, "malformed", "cluster job must be a JSON object")
+        job = body.get("job")
+        if not isinstance(job, dict):
+            raise _HttpRequestError(400, "malformed", "cluster job requires a 'job' object")
+        job_id = job.get("job_id") or body.get("job_id") or f"cj-{uuid.uuid4().hex}"
+        if not isinstance(job_id, str) or not job_id:
+            raise _HttpRequestError(400, "malformed", "cluster job_id required")
+        subtasks = job.get("subtasks")
+        if not isinstance(subtasks, list) or not subtasks:
+            raise _HttpRequestError(400, "bad-job", "cluster job subtasks must be a non-empty list")
+        mode = job.get("mode")
+        if mode not in ("map_reduce", "scatter_gather", "pipeline"):
+            raise _HttpRequestError(400, "bad-job", f"unsupported cluster job mode {mode!r}")
+        now = self._now().isoformat().replace("+00:00", "Z")
+        constructed = self._cluster_construct(job)
+        record = {
+            "job_id": job_id,
+            "job": job,
+            "status": "accepted",
+            "execute_enabled": bool(getattr(self, "_cluster_execute_enabled", False)),
+            "accepted_at": now,
+            "updated_at": now,
+            "result": None,
+            "constructed": constructed,
+            "placement": constructed.get("placement") or {"topology": "none", "assignments": []},
+            "reduced": None,
+        }
+        with self._cluster_jobs_lock:
+            path = self._cluster_jobs_dir / f"{job_id}.json"
+            if path.exists():
+                raise _HttpRequestError(409, "duplicate", f"cluster job {job_id} already exists")
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "status": "accepted",
+            "execute_enabled": bool(getattr(self, "_cluster_execute_enabled", False)),
+        }
+
+    def cluster_job_status(self, job_id: str) -> dict[str, Any]:
+        if not isinstance(job_id, str) or not job_id:
+            raise _HttpRequestError(400, "malformed", "job_id required")
+        with self._cluster_jobs_lock:
+            path = self._cluster_jobs_dir / f"{job_id}.json"
+            if not path.exists():
+                raise _HttpRequestError(404, "not-found", f"cluster job {job_id} not found")
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise _HttpRequestError(500, "unreadable", str(exc))
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "status": record.get("status"),
+            "execute_enabled": bool(record.get("execute_enabled")),
+            "updated_at": record.get("updated_at"),
+        }
+
+    def cluster_job_result(self, job_id: str) -> dict[str, Any]:
+        if not isinstance(job_id, str) or not job_id:
+            raise _HttpRequestError(400, "malformed", "job_id required")
+        with self._cluster_jobs_lock:
+            path = self._cluster_jobs_dir / f"{job_id}.json"
+            if not path.exists():
+                raise _HttpRequestError(404, "not-found", f"cluster job {job_id} not found")
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise _HttpRequestError(500, "unreadable", str(exc))
+        if record.get("status") not in ("completed", "failed", "cancelled"):
+            raise _HttpRequestError(409, "not-ready", f"cluster job {job_id} not ready (status={record.get('status')})")
+        return {"ok": True, "job_id": job_id, "status": record.get("status"), "result": record.get("result")}
+
     def _now(self) -> datetime:
         return (self.clock or _utcnow)()
 
+    def _registry_file_stamp(self) -> tuple[int, int] | None:
+        try:
+            info = self.registry_path.stat()
+        except OSError:
+            return None
+        return (info.st_mtime_ns, info.st_size)
+
     def registry(self) -> dict[str, Any]:
-        if self._registry is None:
+        """The registry this node holds, re-read whenever the file changes.
+
+        Caching it for the process lifetime looked harmless and was not. The mesh
+        size is derived from it, and `Regime.mode_for` derives the governance mode
+        from the mesh size — so a frozen copy froze the mode too. A third node
+        joining while the bridge ran left it computing `peer_pair`, the symmetric
+        mode with **no Master arbitration**, for shares that `master_governed`
+        requires ratification on. The guard installs registry publications under a
+        running bridge (contracts/registry-publication.json), so the file really
+        does change; and contracts/share-protocol.md says a third node joining
+        mid-share re-evaluates rather than grandfathers, which a cached count
+        cannot do.
+
+        Still cheap: one `stat` per call, and a parse only when the stamp moves.
+        An unreadable file propagates exactly as before — this changes *when* the
+        registry is read, not what happens when it cannot be.
+        """
+        stamp = self._registry_file_stamp()
+        if self._registry is None or stamp != self._registry_stamp:
             self._registry = json.loads(self.registry_path.read_text())
+            self._registry_stamp = stamp
         return self._registry
+
+    def _mesh_count(self) -> int:
+        """Live mesh size: this node plus every authorization the registry carries."""
+        return 1 + len(list(self.registry().get("authorizations") or []))
 
     def node_identity(self) -> dict[str, Any]:
         if self._identity is None:
@@ -1167,6 +1377,103 @@ class Bridge:
             }
         return 200, {"ok": True, "action": action, "webui_status": webui_status, "result": result}
 
+    # -- reflex ---------------------------------------------------------------
+
+    def reflex_mode(self) -> str:
+        """Local is the default. `off`, `broker` and `auto` are opt-in."""
+        mode = os.environ.get("SPARKNET_REFLEX_MODE", "local").strip().lower()
+        return mode if mode in self.reflex.MODES else "off"
+
+    def reflex_decide(self, body: dict[str, Any], _grant: dict[str, Any]) -> dict[str, Any]:
+        """Validate a reflex request and answer it under the configured mode.
+
+        Local mode uses local reranker/LLM by default (no egress). Broker mode
+        forwards to the Master's broker. Reflex is a sensor: this method cannot
+        grant, sign, approve or widen anything.
+        """
+        mode = self.reflex_mode()
+        request = dict(body)
+        node_id = str(self.node_identity().get("node_id") or "")
+        if node_id:
+            request["node_id"] = node_id
+        self.reflex.validate_request(request)
+        model = request.get("model") or "local"
+
+        if mode == "off":
+            return self.reflex.abstain_decision(model, "null", "", request, reason="off")
+
+        if mode in ("local", "auto"):
+            backend_name = self.reflex.backend_from_env(request.get("question_class", "rag.relevance"))
+            # `local` mode must never open a socket off-node, so an operator who
+            # named the Master's broker there gets an abstain rather than a
+            # request leaving this node; `auto` falls through to the broker path
+            # below, which is the one mode that may leave.
+            if backend_name == "broker":
+                if mode != "auto":
+                    return self.reflex.abstain_decision(model, "null", "", request, reason="backend-misconfigured")
+            elif backend_name == "null":
+                return self.reflex.abstain_decision(model, "null", "", request, reason="off")
+            else:
+                started = time.monotonic()
+                try:
+                    if backend_name in ("local-rerank", "rules"):
+                        # One query+chunk arrives per call, so the batch
+                        # reranker's distance blend does not apply here; the
+                        # shared local sensor scores lexical coverage instead.
+                        # No coverage is *no signal* (abstain), never a reject:
+                        # a semantic-only match must not be read as a confident
+                        # "irrelevant".
+                        answer = self.reflex.local_relevance_answer(request)
+                        return self.reflex.decision_from_answer(
+                            answer,
+                            request,
+                            backend=backend_name,
+                            model=model,
+                            latency_ms=(time.monotonic() - started) * 1000.0,
+                        )
+                    decision = self.reflex.consult(
+                        self.reflex.local_llm_backend(model),
+                        request,
+                        timeout_s=_reflex_local_timeout(),
+                        backend=backend_name,
+                        model=model,
+                    )
+                    decision.setdefault("latency_ms", (time.monotonic() - started) * 1000.0)
+                    return decision
+                except self.reflex.ReflexNoSignal:
+                    return self.reflex.abstain_decision(model, backend_name, "", request, reason="low-signal")
+                except Exception:
+                    return self.reflex.abstain_decision(model, backend_name, "", request, reason="local-error")
+
+        broker = os.environ.get("SPARKNET_REFLEX_BROKER_URL", "http://10.100.0.1:4224").strip().rstrip("/")
+        if not broker:
+            return self.reflex.abstain_decision(model, "broker", "", request, reason="broker-not-configured")
+        try:
+            timeout = float(os.environ.get("SPARKNET_REFLEX_TIMEOUT", "2.0"))
+        except ValueError:
+            timeout = 2.0
+        if timeout <= 0:
+            timeout = 2.0
+
+        started = time.monotonic()
+        try:
+            payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            broker_request = urllib.request.Request(
+                broker + "/v1/reflex/decide",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(broker_request, timeout=timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 - a broker failure must abstain, never raise into the caller
+            return self.reflex.abstain_decision(model, "broker", "", request, reason="broker-error")
+
+        if not isinstance(result, dict) or result.get("verdict") not in self.reflex.VERDICTS:
+            return self.reflex.abstain_decision(model, "broker", "", request, reason="broker-malformed")
+        result.setdefault("latency_ms", (time.monotonic() - started) * 1000.0)
+        return result
+
     def handle(
         self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any], grant: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
@@ -1192,6 +1499,16 @@ class Bridge:
             return 200, json.loads(spec_path.read_text(encoding="utf-8"))
         if method == "POST" and path == "/v1/chat/completions":
             return 200, self.chat_completions(body, grant)
+        if method == "POST" and path == "/v1/reflex/decide":
+            return 200, self.reflex_decide(body, grant)
+        if method == "POST" and path == "/v1/cluster/submit":
+            return 200, self.cluster_job_submit(body, grant)
+        if method == "GET" and path.startswith("/v1/cluster/status/"):
+            job_id = path[len("/v1/cluster/status/") :].strip("/")
+            return 200, self.cluster_job_status(job_id)
+        if method == "GET" and path.startswith("/v1/cluster/result/"):
+            job_id = path[len("/v1/cluster/result/") :].strip("/")
+            return 200, self.cluster_job_result(job_id)
         if path.startswith("/session/"):
             rest = urllib.parse.unquote(path[len("/session/") :].strip("/"))
             parts = [part for part in rest.split("/") if part]

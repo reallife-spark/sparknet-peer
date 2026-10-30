@@ -1,0 +1,19 @@
+# The peer's checkpoint anchor — a signed head statement, pushed as evidence.
+#
+# Appends a checkpoint block only when the ledger head has moved since the last
+# one (a re-run over an unchanged chain writes nothing) and pushes the full
+# signed block to the Master as kind=checkpoint_anchor telemetry. The timer is
+# what makes it periodic:
+#   systemctl --user enable --now sparknet-checkpoint-anchor.timer
+
+[Unit]
+Description=Sparknet checkpoint anchor (peer ledger head -> Master evidence, no authority)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-checkpoint-anchor
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

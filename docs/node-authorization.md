@@ -20,7 +20,7 @@ Canonical JSON, sorted keys, no whitespace — so the same identity always yield
 the same fingerprint on any machine.
 
 ```bash
-python3 services/sparknet-authz.py fingerprint manifests/node-identity.json
+python3 ../shared/sparknet-authz.py fingerprint manifests/node-identity.json
 ```
 
 ## The registry
@@ -29,12 +29,24 @@ python3 services/sparknet-authz.py fingerprint manifests/node-identity.json
 signed over the fingerprint, identity, capabilities, overlay address, issue and
 expiry, and a revoked flag.
 
+The **shape** of that document is contracted once, in
+[`../../contracts/registry-schema.json`](../../contracts/registry-schema.json),
+and it is checked by
+[`../../shared/sparknet-registry-schema.py`](../../shared/sparknet-registry-schema.py)
+— the same checker the Master uses, so a document this node would reject is
+also one the Master is told about. It is one contract and one implementation
+because a peer's copy could drift from the Master's, and then a valid registry
+would fail on one node and pass on another.
+
+```bash
+# check the shipped registry against the contract
+python3 ../shared/sparknet-registry-schema.py --registry manifests/node-authorizations.json
+```
+
 ```bash
 # Master side. The Master private key never leaves the Master.
-python3 services/sparknet-authz.py sign manifests/node-identity.json \
-  --master-key /path/to/master-ed25519.key \
-  --capabilities telemetry,p2p-sync,guard-apply \
-  --out entry.json
+make -C ../master-node authz-sign IDENTITY=manifests/node-identity.json \
+  CAPS=telemetry,p2p-sync,guard-apply OUT=entry.json
 
 # Node side.
 make authz-verify

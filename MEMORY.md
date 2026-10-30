@@ -4,7 +4,7 @@
 > The plan and its cursor live in `PLAN.md` — this file mirrors it, it does not
 > own it. Per-session detail belongs in `sessions/YYYY-MM-DD.md`.
 
-Updated: 2026-10-11
+Updated: 2026-10-25
 
 ## Standing State
 
@@ -24,10 +24,25 @@ Updated: 2026-10-11
 - **Config**: `.env` (`VAULT_PATH`); staged writes: false.
 - **Fabric root**: parent directory, holding `contracts/` and `shared/`.
   Override with `SPARKNET_FABRIC_ROOT` for a standalone deployment.
+- **Inbox review (2026-10-25)**: `agents/vault-curator` is a deterministic CLI, not a listener. Record
+  acceptance first (`make accept-inbox ITEM=01_Inbox/... SOURCE=... REVIEWER=agents/vault-curator
+  SANITIZED=1`), then `make review-inbox ITEM=... APPLY=1`. Untrusted (`peer-node`/`email`) items are
+  refused unless the ledger verifies and an accepted, `sanitized: true`, reviewer-named
+  `inbox_acceptance` matches; reviewed bytes become `validity: sanitized` and are user-key signed.
 - **Blockers**: none currently active. Legacy facts updated 2026-10-11 — the
   Master role IS now built and its signer IS elected/proven live on node131
   (see `../master-node/plans/MASTER_BUILD_PLAN.md`); the old "Master unused /
   no usable keypair" facts below no longer hold and were removed.
+
+- **A registry arrives as a signed publication, pushed to this node's guard.**
+  `POST /api/v1/registry` on 9090 verifies the Master's signature under the
+  pinned key, the document against the registry contract, and a monotonic
+  sequence, then installs it (`manifests/node-authorizations.json` plus
+  `registry-installation.json`). It refuses a replay, so a revoked capability
+  cannot be restored by serving an older registry. The offline path is
+  `make registry-fetch PUBLICATION=…`; both use
+  `../shared/sparknet-registry-install.py`. Installing a registry needs no
+  `--apply-enabled` and no root — it writes the vault, not `/etc`.
 
 ## Key Standing Facts
 
@@ -46,9 +61,10 @@ Updated: 2026-10-11
   chains, ports 8181/11434/18000, allowed loopback+LAN+overlay+docker+link-local).
   The published ports are reachable on LAN and the WireGuard overlay, dropped on
   public v6 (and v4 non-LAN). If asked "why 0.0.0.0", the answer is the firewall.
-- Live WireGuard overlay (`10.100.0.0/24`), the firewall chains and systemd
-  behaviour ARE now verified on the target nodes — unlike the development host,
-  which still has no nftables/WireGuard and must not over-claim.
+- Live WireGuard overlay (`10.100.0.0/24`), the iptables firewall chains and
+  systemd behaviour ARE now verified on the target nodes — unlike the
+  development host, which still has no usable WireGuard and must not over-claim.
+  The fleet uses iptables, not nftables.
 - Hopskotch: node131 mints cluster2 grants (e.g. `webui-node131-20261011`,
   `webui-node133-20261011`) with the cluster2 operational key
   (`$SPARKNET_STATE_DIR/keys/operational.ed25519`), bearer tokens 0600 at

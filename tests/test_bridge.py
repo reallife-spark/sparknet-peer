@@ -627,3 +627,141 @@ def test_openapi_spec_describes_the_vault_tools() -> None:
         assert tool in operations, f"OpenAPI must describe the {tool} operation"
     assert "/v1/models" in spec["paths"]
     assert "BearerAuth" in spec.get("components", {}).get("securitySchemes", {})
+
+
+# --- Step 66B: the department boundary is wired to the signed registry ---------
+
+
+def _identity(node_id: str, overlay: str) -> dict:
+    return {
+        "node_id": node_id,
+        "role": "peer",
+        "wireguard_public_key_b64": base64.b64encode(b"fake-wg-public-key-for-tests!!".ljust(32, b"0")[:32]).decode(),
+        "overlay_ipv4": overlay,
+        "requested_capabilities": ["telemetry"],
+    }
+
+
+def _registry_with_departments(ctx: dict, *, self_caps: list[str], self_dept, other_dept) -> None:
+    """Rewrite the node's registry so two nodes carry Master-attested departments."""
+    caps = list(self_caps)
+    entries = [authz.sign_authorization(ctx["identity"], ctx["master_key"], caps, department=self_dept)]
+    other = _identity("node-b", "10.100.0.9")
+    entries.append(authz.sign_authorization(other, ctx["master_key"], ["telemetry"], department=other_dept))
+    registry = {
+        "schema_version": "1.0",
+        "master_public_key_b64": _master_pub_b64(ctx["master_key"]),
+        "description": "test registry with attested departments",
+        "authorizations": entries,
+    }
+    path = ctx["vault"] / "manifests" / "node-authorizations.json"
+    path.write_text(json.dumps(registry, indent=2) + "\n")
+    # Every entry must still verify: the point of the field is that it is signed,
+    # so an attestation that broke the signature would prove nothing.
+    public_key = ctx["master_key"].public_key()
+    for entry in registry["authorizations"]:
+        assert authz.verify_signature(public_key, entry["signature_b64"], authz.authorization_message(entry))
+
+
+def _bridge(ctx: dict):
+    return bridge_mod.Bridge(
+        ctx["vault"], registry=ctx["vault"] / "manifests" / "node-authorizations.json", clock=lambda: NOW
+    )
+
+
+def test_the_bridge_reads_departments_from_the_signed_registry(ctx: dict) -> None:
+    """Attestation comes from the registry, not from anything a node claims."""
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept="research", other_dept="finance")
+    bridge = _bridge(ctx)
+    own_id = str(bridge.node_identity()["node_id"])
+    assert bridge._department_of(own_id) == "research"
+    assert bridge._department_of("node-b") == "finance"
+    assert bridge._department_of("nobody") is None, "an unknown node is unattested, not assumed"
+
+
+def test_an_unattested_department_is_none_not_empty(ctx: dict) -> None:
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept=None, other_dept=None)
+    bridge = _bridge(ctx)
+    own_id = str(bridge.node_identity()["node_id"])
+    assert bridge._department_of(own_id) is None
+    assert bridge._department_of("node-b") is None
+
+
+def test_the_regime_the_bridge_builds_refuses_a_cross_department_offer(ctx: dict) -> None:
+    """End to end: signed registry -> resolver -> engine -> refusal.
+
+    Without this the engine's rule would be correct and inert, because the bridge
+    is what constructs the regime a real request reaches.
+    """
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept="research", other_dept="finance")
+    bridge = _bridge(ctx)
+    regime = bridge._share_regime()
+    with pytest.raises(Exception) as exc:
+        regime.offer("kb-view", toward="node-b")
+    assert exc.value.status == 403 and exc.value.reason == "cross-department"
+
+
+def test_the_regime_allows_it_once_the_registry_grants_the_capability(ctx: dict) -> None:
+    xdept = "cross-department-share"
+    _registry_with_departments(ctx, self_caps=["telemetry", xdept], self_dept="research", other_dept="finance")
+    bridge = _bridge(ctx)
+    regime = bridge._share_regime()
+    own_id = str(bridge.node_identity()["node_id"])
+    assert bridge._holds_capability(own_id, xdept) is True
+    offer = regime.offer("kb-view", toward="node-b")
+    assert regime.get(offer["share_id"])["departments"]["crosses"] is True
+    assert regime.get(offer["share_id"])["departments"]["permitted_by"] == xdept
+
+
+def test_the_regime_binds_nothing_when_no_department_is_attested(ctx: dict) -> None:
+    """A deployment whose Master attests no departments shares as it always did."""
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept=None, other_dept=None)
+    bridge = _bridge(ctx)
+    regime = bridge._share_regime()
+    offer = regime.offer("kb-view", toward="node-b")
+    recorded = regime.get(offer["share_id"])["departments"]
+    assert recorded["crosses"] is False
+    assert recorded["mine"] is None and recorded["theirs"] is None
+
+
+def test_the_governance_mode_tracks_a_registry_change_without_a_restart(ctx: dict) -> None:
+    """A third node joining must move the mode, or ratification is skipped.
+
+    `peer_pair` is symmetric and has **no Master arbitration**; `master_governed`
+    requires the Master to ratify every cross-node share. A bridge that froze the
+    mesh size at construction kept answering `peer_pair` after a third node
+    joined, which is the one direction a stale cache can err in that *removes a
+    check*. The guard installs registry publications under a running bridge, so
+    this is a reachable state rather than a hypothetical one.
+    """
+    bridge = _bridge(ctx)
+    regime = bridge._share_regime()
+    assert bridge._mesh_count() == 2, "ctx ships one authorization plus this node"
+    assert regime.mode_for() == "peer_pair"
+
+    # A second authorization lands on disk while the bridge is still running.
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept=None, other_dept=None)
+    assert bridge._mesh_count() == 3
+    assert regime.mode_for() == "master_governed", (
+        "the same regime object must see the third node; a cached count would still say peer_pair"
+    )
+
+
+def test_a_department_attested_after_startup_is_seen(ctx: dict) -> None:
+    """Attestation is read live too, so granting a department needs no restart."""
+    bridge = _bridge(ctx)
+    own_id = str(bridge.node_identity()["node_id"])
+    assert bridge._department_of(own_id) is None, "the ctx registry attests no department"
+
+    _registry_with_departments(ctx, self_caps=["telemetry"], self_dept="research", other_dept="research")
+    assert bridge._department_of(own_id) == "research"
+    assert bridge._department_of("node-b") == "research"
+
+
+def test_an_unreadable_registry_still_propagates(ctx: dict) -> None:
+    """The freshness fix changes *when* the file is read, not what a failure does."""
+    bridge = _bridge(ctx)
+    bridge.registry()
+    ctx["vault"].joinpath("manifests", "node-authorizations.json").unlink()
+    with pytest.raises(OSError):
+        bridge.registry()

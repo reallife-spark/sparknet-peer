@@ -23,6 +23,18 @@
   },
   "trust": "an accepted peer arrives flagged; in master_governed a Master ratification moves it to authenticated and *retains* the flag (capabilities.json trust_levels.retained_after_ratification); in peer_pair both endpoints stay flagged because nothing arbitrates",
 
+  "department_boundary": {
+    "added": "2026-10-24 (fabric PLAN Step 66B)",
+    "capability": "cross-department-share",
+    "attestation": "the department compared is the `department` field of each node's Master-signed registry entry (contracts/registry-schema.json signed_envelope_fields). It is never read from anything a node says about itself: in-department sharing is the easier path, so a self-declared department would be the cheap way into whichever department a node wanted to read.",
+    "binds_when": "both sides carry an attested department AND the two differ. Where the Master attested none there is no boundary to cross, so a fresh deployment shares exactly as it did before this rule existed instead of needing a grant nobody has issued yet.",
+    "checked_by": "both sides, each against its own view of the registry. The offerer is refused at offer(); the acceptor is refused at accept(). Trusting the sender would let one granted node pull an ungranted one across the boundary.",
+    "refusal": "403 cross-department, naming the capability that would permit it",
+    "narrowing_does_not_help": "a narrower share type still needs the capability. The type says what a share conveys; the department says who may share at all, so letting kb-view through because it copies nothing would make the boundary depend on the least sensitive choice available.",
+    "audit": "an inbound offer a node will refuse is still recorded, with the boundary marked and `permitted_by` null. An attempt refused silently leaves no evidence it was made, and the evidence is the point.",
+    "widens_nothing_else": "the holder still needs the ordinary share grant, still obeys the four clocks, and in master_governed mode still needs ratification"
+  },
+
   "actions": {
     "stanza-up": "the acceptor's host may bring up the time-boxed data-plane stanza",
     "teardown-stanza": "on explicit close, idle, absolute expiry, or refusal",

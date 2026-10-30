@@ -22,14 +22,15 @@ Applying a patch means lifting ``chattr +i`` on a root-owned file under /etc and
 writing it. That requires ALL of:
 
 1. a valid Ed25519 signature from the Master over the approval envelope,
-2. an unexpired, un-replayed request (nonce + request_id + expiry),
-3. a target listed in ``protected_paths`` of the critical manifest,
-4. the node's own authorization entry to grant ``guard-apply``,
-5. euid == 0,
-6. ``--apply-enabled`` on the command line.
+2. an approval addressed to *this* peer (its fingerprint is in the envelope),
+3. an unexpired, un-replayed request (nonce + request_id + expiry),
+4. a target listed in ``protected_paths`` of the critical manifest,
+5. the node's own authorization entry to grant ``guard-apply``,
+6. euid == 0,
+7. ``--apply-enabled`` on the command line.
 
 Any missing condition is a refusal, never a partial write. Verification and
-auditing happen regardless of (5) and (6), so an unarmed daemon still leaves a
+auditing happen regardless of (6) and (7), so an unarmed daemon still leaves a
 complete audit trail.
 """
 
@@ -49,7 +50,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 try:
     from cryptography.exceptions import InvalidSignature
@@ -70,20 +71,45 @@ DEFAULT_VAULT_ROOT = SERVICE_DIR.parent
 # content* is inside it. content_b64 must be signed, not merely hashed-and-sent:
 # signing the hash alone would let anything on the path substitute the bytes and
 # still match the digest.
-APPROVAL_FIELDS = ("file_path", "content_b64", "content_sha256", "issued_at", "expires_at", "nonce", "request_id")
+#
+# The *rule* — which fields, and how they are serialised — is not written here.
+# It lives in shared/sparknet-authz.py::guard_approval_message, because the
+# Master signs with it and this daemon verifies with it. A second copy of that
+# rule is how the two sides drift apart while each keeps working against its own
+# assumption; this daemon used to carry exactly such a copy, and the Master used
+# to carry a third.
 
 #: Fallback when manifests/security-policies.json is unreadable. Fail to the
 #: documented topology rather than to "accept everything".
 DEFAULT_MASTER_ANCHOR_IP = "10.100.0.1"
 
+#: A remote arrival alert is evidence, not part of acceptance. Bound the wait so
+#: an unreachable Master cannot hold the RFI response open for the pusher default.
+INBOX_ALERT_TIMEOUT = 3
+
 
 def approval_message(payload: dict[str, Any]) -> bytes:
-    """Deterministic bytes the Master signs."""
-    try:
-        envelope = {field: payload[field] for field in APPROVAL_FIELDS}
-    except KeyError as exc:
-        raise ValueError(f"approval payload missing field: {exc}") from exc
-    return json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Deterministic bytes the Master signs for one approval.
+
+    Delegates to the one implementation in ``shared/sparknet-authz.py``. The
+    daemon does not decide what an approval looks like; it decides what to do
+    with one.
+    """
+    authz = _load_authz_module()
+    if authz is None:
+        raise RuntimeError("shared/sparknet-authz.py not found; the guard cannot canonicalise an approval")
+    return authz.guard_approval_message(payload)
+
+
+#: Refusal detail for each way the operator-OS ceiling can fail. Fixed strings
+#: rather than interpolated ones: the reason code is what an operator greps a
+#: ledger for, and the detail must not vary with the payload it refused.
+_OPERATOR_REFUSALS = {
+    "operator_unattested": "the approval attests no operator OS identity, so a privileged apply is refused",
+    "operator_insufficient": "the attested operator lacks the privilege this apply needs",
+    "operator_malformed": "the approval's operator attestation is not decodable",
+    "grant_malformed": "the approval is not an object the ceiling can be read from",
+}
 
 
 class Refusal(Exception):
@@ -94,6 +120,24 @@ class Refusal(Exception):
         self.status = status
         self.code = code
         self.detail = detail
+
+
+#: Maps an RFI answer refusal reason (contracts/rfi-schema.json `refusals`, produced
+#: by shared/sparknet-authz.py::verify_rfi_answer) to the HTTP status the guard
+#: sends. `off_overlay` is absent because the source gate in do_POST refuses it
+#: before the body is ever read. Attribution failures are 403, a bad artifact is
+#: 400, and a duplicate is 409 — the same split the registry route uses.
+RFI_REFUSAL_STATUS = {
+    "malformed": 400,
+    "extra_fields": 400,
+    "missing_fields": 400,
+    "unsafe_item_name": 400,
+    "digest_mismatch": 400,
+    "bad_signature": 403,
+    "wrong_peer": 403,
+    "expired": 403,
+    "duplicate_answer": 409,
+}
 
 
 # --- audit ledger ------------------------------------------------------------
@@ -418,6 +462,75 @@ def _load_authz_module():
     return _load_shared_module("sparknet-authz.py", "sparknet_authz")
 
 
+def _load_registry_schema_module():
+    """The shared registry checker: the shape a published registry must have.
+
+    The same module the Master runs before publishing, loaded by path. A peer
+    that installed a document this checker refuses would be installing a shape
+    no other node agrees with.
+    """
+    return _load_shared_module("sparknet-registry-schema.py", "sparknet_registry_schema")
+
+
+def _load_registry_install_module():
+    """The shared acceptance rule: what makes a publication installable.
+
+    Loaded by path, like every other shared module, so the guard and the offline
+    registry client cannot disagree about it.
+    """
+    return _load_shared_module("sparknet-registry-install.py", "sparknet_registry_install")
+
+
+def _load_rfi_install_module():
+    """The shared RFI acceptance rule: what makes an answer installable.
+
+    Loaded by path so the guard's ``/api/v1/rfi`` route and any operator-carried
+    offline install accept and refuse exactly the same things — the same reason the
+    registry rule lives in ``shared/`` rather than once per surface.
+    """
+    return _load_shared_module("sparknet-rfi-install.py", "sparknet_rfi_install")
+
+
+def _load_provenance_module():
+    """The shared provenance tool: it builds and appends the ``inbox_acceptance``
+    block an installed RFI answer records. Loaded by path, one copy."""
+    return _load_shared_module("sparknet-provenance.py", "sparknet_provenance")
+
+
+def _load_notify_module():
+    """The shared node-local notifier: it tells the human an item arrived.
+
+    Loaded by path so the peer's inbox-arrival ping and the Master console's use
+    the one implementation (``shared/sparknet-notify.py``). Optional: a node
+    without it still installs — notification is a courtesy, never a gate.
+    """
+    return _load_shared_module("sparknet-notify.py", "sparknet_notify")
+
+
+def _load_telemetry_pusher():
+    """The peer's 70A pusher, loaded by path from this role's services dir.
+
+    ``inbox_alert`` rides the same envelope and endpoint as status/metrics, so the
+    guard reuses the one pusher instead of building a second report by hand. It is
+    optional: a guard without it still installs and still leaves the local spool.
+    """
+    import importlib.util
+
+    path = SERVICE_DIR / "sparknet-telemetry-push.py"
+    if not path.is_file():
+        return None
+    modname = "sparknet_telemetry_pusher"
+    if modname in sys.modules:
+        return sys.modules[modname]
+    spec = importlib.util.spec_from_file_location(modname, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_http_module():
     """The shared sparknet-http.py: the one handler base every listener uses.
 
@@ -492,6 +605,30 @@ class Guard:
         decision = sparknet_authz.evaluate(identity, registry, pubkey)
         return decision.capabilities if decision.allowed else []
 
+    def own_fingerprint(self) -> str | None:
+        """This node's own fingerprint, from its own identity manifest.
+
+        An approval names the peer it is addressed to. Without this, a valid
+        signature would say only *that* the Master signed something — not that
+        the Master meant *this* node, and an approval minted for one peer could
+        be applied by another that protects the same path.
+
+        None means the node cannot say who it is, and the daemon refuses
+        approvals rather than accepting one it cannot attribute.
+        """
+        sparknet_authz = _load_authz_module()
+        if sparknet_authz is None:
+            return None
+        identity_path = self.vault_root / "manifests" / "node-identity.json"
+        try:
+            identity = json.loads(identity_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        try:
+            return sparknet_authz.fingerprint(identity)
+        except Exception:
+            return None
+
     def mode(self) -> str:
         """anchored when an overlay address is configured and reachable."""
         address = self.overlay_address()
@@ -540,6 +677,234 @@ class Guard:
         """Client addresses allowed to submit a patch request."""
         return {"127.0.0.1", "::1", self.master_anchor_address()}
 
+    # -- registry intake ----------------------------------------------------
+
+    def installed_sequence(self) -> int:
+        """The highest publication sequence this node has installed, 0 if none."""
+        install = _load_registry_install_module()
+        if install is None:
+            return 0
+        return install.installed_sequence(self.vault_root)
+
+    def handle_registry(self, artifact: Any) -> dict[str, Any]:
+        """Install one signed registry publication, or refuse it.
+
+        This is the peer's half of the distribution channel. It is deliberately
+        *not* gated on the peer's own ``guard-apply`` capability: the node being
+        revoked must be able to receive the registry that revokes it, and a
+        revocation the revoked node cannot hear is not a revocation.
+
+        The acceptance rule itself lives once in
+        ``shared/sparknet-registry-install.py``, because the offline registry
+        client installs publications too.
+        """
+        with self._apply_lock:
+            return self._handle_registry_locked(artifact)
+
+    def _handle_registry_locked(self, artifact: Any) -> dict[str, Any]:
+        authz = _load_authz_module()
+        schema = _load_registry_schema_module()
+        install = _load_registry_install_module()
+        if self.master_pubkey is None:
+            raise Refusal(503, "no_master_key", "guard has no Master public key loaded")
+        if authz is None or schema is None or install is None:
+            raise Refusal(503, "no_contract", "shared registry code is not available")
+        try:
+            result = install.accept_publication(
+                self.vault_root,
+                artifact,
+                authz,
+                schema,
+                self.master_pubkey,
+                dry_run=self.dry_run,
+            )
+        except install.InstallError as exc:
+            sequence = artifact.get("sequence") if isinstance(artifact, dict) else None
+            self.ledger.append("registry_refused", {"code": exc.code, "sequence": sequence, "detail": exc.detail[:500]})
+            raise Refusal(exc.status, exc.code, exc.detail) from exc
+
+        event = "registry_verified_dry_run" if self.dry_run else "registry_installed"
+        block = self.ledger.append(
+            event,
+            {
+                "sequence": result["sequence"],
+                "registry_sha256": result["registry_sha256"],
+                "entries": result["entries"],
+            },
+        )
+        return {**result, "audit_block": block["hash"]}
+
+    # -- RFI answer intake --------------------------------------------------
+
+    def installed_request_ids(self) -> list[str]:
+        """The request_ids this node has already installed an answer for, so a
+        re-delivery is a duplicate rather than a second copy of the same thing."""
+        install = _load_rfi_install_module()
+        if install is None:
+            return []
+        return install.installed_request_ids(self.vault_root)
+
+    def handle_rfi(self, artifact: Any) -> dict[str, Any]:
+        """Install one signed RFI answer into 01_Inbox, or refuse it.
+
+        This is the peer's half of the intake channel (contracts/rfi-schema.json):
+        the Master answers a request-for-information by pushing a digest-bound,
+        signed answer to POST /api/v1/rfi on this port. Like the registry route it
+        is *not* gated on the peer's own capability — information the Master
+        addressed to this node must reach it — and the acceptance rule lives once
+        in shared/sparknet-rfi-install.py, so this live route and an operator
+        carrying an artifact to a node with no daemon cannot disagree about what a
+        peer trusts.
+        """
+        with self._apply_lock:
+            return self._handle_rfi_locked(artifact)
+
+    def _handle_rfi_locked(self, artifact: Any) -> dict[str, Any]:
+        authz = _load_authz_module()
+        install = _load_rfi_install_module()
+        provenance = _load_provenance_module()
+        if self.master_pubkey is None:
+            raise Refusal(503, "no_master_key", "guard has no Master public key loaded")
+        if authz is None or install is None or provenance is None:
+            raise Refusal(503, "no_contract", "shared rfi code is not available")
+
+        mine = self.own_fingerprint()
+        if mine is None:
+            # An answer is bound to the peer it was prepared for; a node that
+            # cannot say who it is cannot check that binding, so it refuses rather
+            # than installing material it cannot attribute to itself.
+            raise Refusal(503, "no_identity", "guard cannot determine this node's fingerprint")
+
+        if self.dry_run:
+            # Verify only, never write — the contract the registry route honours
+            # too. No user record is needed because nothing is recorded.
+            ok, reason, _content = authz.verify_rfi_answer(
+                artifact,
+                master_public_key=self.master_pubkey,
+                peer_fingerprint=mine,
+                installed_request_ids=self.installed_request_ids(),
+            )
+            if not ok:
+                self._refuse_rfi(reason, artifact)
+            return {
+                "status": "RFI_VERIFIED_DRY_RUN",
+                "request_id": str(artifact.get("request_id")),
+                "content_sha256": str(artifact.get("content_sha256")),
+                "item": f"01_Inbox/{artifact.get('item_name')}",
+            }
+
+        # Installing appends a dual-signed inbox_acceptance block, which needs a
+        # filled user record and this node's keys. Check before writing anything:
+        # accept_answer writes the item first, so a vault that cannot record the
+        # acceptance would leave an item with no trail and a re-delivery refused
+        # as a duplicate. Failing here, before the write, keeps the inbox honest.
+        try:
+            record = provenance.parse_user_record(self.vault_root)
+            if not provenance.user_is_filled(record):
+                raise provenance.ProvenanceError("user record is unfilled")
+        except Exception:
+            raise Refusal(503, "no_user_record", "this vault has no filled user record; run `make user-init`") from None
+
+        result = install.accept_answer(
+            self.vault_root,
+            artifact,
+            authz=authz,
+            provenance=provenance,
+            master_public_key=self.master_pubkey,
+            peer_fingerprint=mine,
+            user_record=record,
+        )
+        if result["status"] == "refused":
+            self._refuse_rfi(result["reason"], artifact)
+
+        block = self.ledger.append(
+            "rfi_installed",
+            {
+                "request_id": result["request_id"],
+                "content_sha256": result["content_sha256"],
+                "item": result["item"],
+                "acceptance_id": result.get("acceptance_id"),
+            },
+        )
+
+        # Tell the human an item landed (fabric Step 67B): acceptance is a human
+        # act, so an unnoticed item is an unaccepted one. Best-effort and *after*
+        # the install and the ledger append, so a notification failure can never
+        # undo or block a delivery that already succeeded. The durable record is
+        # the inbox_acceptance block above; this is the alert that reaches a person.
+        notified = False
+        notify = _load_notify_module()
+        if notify is not None:
+            outcome = notify.notify_inbox_arrival(
+                self.vault_root,
+                item=result["item"],
+                source="master-node",
+                request_id=result["request_id"],
+            )
+            notified = bool(outcome.get("notified"))
+
+        # 70F: the same arrival is evidence the Master can see. The local ping
+        # above reaches whoever is at this node; a headless peer has nobody, so
+        # the alert rides telemetry to the Master's admin surface. It is unsigned
+        # and overlay-attributed like every report, and it cannot affect the
+        # install: a failed push returns False and the item stays installed.
+        alerted = self._emit_inbox_alert(result, block)
+        return {**result, "audit_block": block["hash"], "notified": notified, "alerted": alerted}
+
+    def _emit_inbox_alert(self, result: dict[str, Any], block: dict[str, Any]) -> bool:
+        """Push an installed arrival as ``kind=inbox_alert``; never a gate.
+
+        Gated on the peer's own ``telemetry`` capability, exactly as 70A. The
+        payload carries the inbox item, its source, request id, content digest and
+        the ``rfi_installed`` audit block hash — enough to correlate the alert
+        with the ledger, no content and no authority. Overlay attribution, the
+        freshness nonce and the Master's capability gate are the envelope's, not
+        this method's; nothing here signs, grants or edits the registry.
+        """
+        pusher = _load_telemetry_pusher()
+        if pusher is None:
+            return False
+        try:
+            capabilities, identity, refusal = pusher.granted_capabilities(self.vault_root)
+            if identity is None or refusal or "telemetry" not in capabilities:
+                return False
+            authz = _load_authz_module()
+            if authz is None:
+                return False
+            endpoint = pusher.resolve_endpoint(self.vault_root)
+            if not endpoint.startswith(("http://", "https://")):
+                return False
+            report = authz.build_telemetry_report(
+                kind="inbox_alert",
+                peer_fingerprint=authz.fingerprint(identity),
+                payload={
+                    "item": result.get("item"),
+                    "source": "master-node",
+                    "request_id": result.get("request_id"),
+                    "content_sha256": result.get("content_sha256"),
+                    "audit_block": block.get("hash"),
+                },
+            )
+            ok, detail = pusher.post_report(endpoint, report, INBOX_ALERT_TIMEOUT)
+            if not ok:
+                print(f"[guard] inbox_alert push failed: {detail}", file=sys.stderr)
+            return ok
+        except Exception as exc:  # a courtesy must not break an install
+            print(f"[guard] inbox_alert skipped: {exc}", file=sys.stderr)
+            return False
+
+    def _refuse_rfi(self, reason: str, artifact: Any) -> NoReturn:
+        """Record an RFI refusal in the guard ledger, then raise it as HTTP.
+
+        The reason is a fixed string from the contract's vocabulary, so it maps to
+        a stable status and an operator can grep the ledger for it. The detail
+        never echoes the artifact: a refused answer is untrusted input.
+        """
+        request_id = artifact.get("request_id") if isinstance(artifact, dict) else None
+        self.ledger.append("rfi_refused", {"code": reason, "request_id": request_id})
+        status = RFI_REFUSAL_STATUS.get(reason, 400)
+        raise Refusal(status, reason, f"the answer was refused: {reason}")
+
     # -- request handling ---------------------------------------------------
 
     def handle_patch(self, packet: dict[str, Any]) -> dict[str, Any]:
@@ -566,21 +931,52 @@ class Guard:
         except Exception as exc:
             raise Refusal(400, "malformed_packet", str(exc)) from exc
 
-        # 1. Master signature, before anything else is trusted.
+        # The canonical bytes are a function of the parsed fields, so the payload
+        # is parsed before the signature is checked. Parsing is not a trust
+        # decision: no value below is read before the signature over the
+        # canonical projection has verified.
+        #
+        # A guard with no Master key cannot verify anything, so it says so
+        # before it reads anything: 503 is the honest answer to any request,
+        # and it costs nothing to compute.
         if self.master_pubkey is None:
             raise Refusal(503, "no_master_key", "guard has no Master public key loaded")
-        try:
-            self.master_pubkey.verify(signature, message)
-        except InvalidSignature as exc:
-            self.ledger.append("patch_refused", {"code": "bad_signature"})
-            raise Refusal(403, "bad_signature", "Ed25519 verification failed") from exc
 
         try:
             payload = json.loads(message.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise Refusal(400, "malformed_payload", str(exc)) from exc
+        if not isinstance(payload, dict):
+            raise Refusal(400, "malformed_payload", "approval payload must be an object")
 
-        # 2. Replay / expiry.
+        # The one canonical rule, shared with the signer. A payload with a
+        # missing or an extra field is refused here rather than half-read: the
+        # signature covers exactly the canonical projection, so an extra field
+        # would be unsigned authority-shaped data.
+        try:
+            canonical = approval_message(payload)
+        except Exception as exc:
+            raise Refusal(400, "malformed_approval", str(exc)) from exc
+
+        # 1. Master signature, before anything else is trusted.
+        try:
+            self.master_pubkey.verify(signature, canonical)
+        except InvalidSignature as exc:
+            self.ledger.append("patch_refused", {"code": "bad_signature"})
+            raise Refusal(403, "bad_signature", "Ed25519 verification failed") from exc
+
+        # 2. The approval must be addressed to *this* peer. A signature says
+        #    nothing about who an approval is for unless the payload says so,
+        #    and without that an approval minted for one peer could be applied
+        #    by another that protects the same path.
+        mine = self.own_fingerprint()
+        if mine is None:
+            raise Refusal(503, "no_identity", "this node has no usable identity manifest")
+        if payload.get("peer_fingerprint") != mine:
+            self.ledger.append("patch_refused", {"code": "wrong_peer", "claimed": payload.get("peer_fingerprint")})
+            raise Refusal(403, "wrong_peer", "the approval names another peer")
+
+        # 3. Replay / expiry.
         try:
             self.replay.check(
                 str(payload.get("nonce", "")),
@@ -592,7 +988,7 @@ class Guard:
             self.ledger.append("patch_refused", {"code": refusal.code, "detail": refusal.detail})
             raise
 
-        # 3. Content integrity.
+        # 4. Content integrity.
         content_b64 = payload.get("content_b64", "")
         try:
             content = base64.b64decode(content_b64, validate=True)
@@ -603,7 +999,7 @@ class Guard:
             self.ledger.append("patch_refused", {"code": "content_hash_mismatch"})
             raise Refusal(400, "content_hash_mismatch", "content does not match content_sha256")
 
-        # 4. Target must be a registered critical path.
+        # 5. Target must be a registered critical path.
         target_path = payload.get("file_path")
         if not isinstance(target_path, str):
             raise Refusal(400, "missing_file_path", "file_path required")
@@ -612,7 +1008,7 @@ class Guard:
             self.ledger.append("patch_refused", {"code": "not_protected", "file_path": target_path})
             raise Refusal(403, "not_protected", f"{target_path} is not in protected_paths")
 
-        # 5. This node must be authorized to apply at all.
+        # 6. This node must be authorized to apply at all.
         capabilities = self.authorization_capabilities()
         if "guard-apply" not in capabilities:
             self.ledger.append(
@@ -620,7 +1016,7 @@ class Guard:
             )
             raise Refusal(403, "capability_missing", f"guard-apply not granted (have: {capabilities or 'none'})")
 
-        # 6. Dry-run short-circuits after verification: the whole point of
+        # 7. Dry-run short-circuits after verification: the whole point of
         #    --dry-run is to exercise signature, replay, manifest and capability
         #    checks and leave an audit trail without touching the filesystem.
         if self.dry_run:
@@ -635,12 +1031,36 @@ class Guard:
                 "audit_block": block["hash"],
             }
 
-        # 7. Arming, then root.
+        # 8. Arming, then the operator's attested ceiling, then root.
         if not self.apply_enabled:
             self.ledger.append(
                 "patch_verified_not_applied", {"code": "unarmed", "file_path": target_path, "sha256": actual}
             )
             raise Refusal(403, "unarmed", "guard is not running with --apply-enabled")
+
+        # The human behind this approval, not the process serving it. The
+        # attestation rides inside the signature, so it cannot be widened in
+        # transit, and an absent one is *unattested* — which fails closed rather
+        # than being read as permission. This complements the euid check below and
+        # does not replace it: the attestation says whether the operator may ask,
+        # the uid says whether this process can do, and a privileged apply needs
+        # both. One rule, in shared/sparknet-authz.py, so the guard cannot drift
+        # from the ceiling a grant-presenting path applies.
+        ceiling_authz = _load_authz_module()
+        if ceiling_authz is None:
+            raise Refusal(
+                503,
+                "no_authz",
+                "shared/sparknet-authz.py not found; the guard cannot check the operator ceiling",
+            )
+        operator_allowed, operator_reason = ceiling_authz.guard_approval_operator_allows(payload, requires_root=True)
+        if not operator_allowed:
+            self.ledger.append(
+                "patch_verified_not_applied",
+                {"code": operator_reason, "file_path": target_path, "sha256": actual},
+            )
+            raise Refusal(403, operator_reason, _OPERATOR_REFUSALS[operator_reason])
+
         if os.geteuid() != 0:
             self.ledger.append("patch_verified_not_applied", {"code": "not_root", "file_path": target_path})
             raise Refusal(403, "not_root", "applying requires euid 0")
@@ -689,11 +1109,12 @@ def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface 
                     "dry_run": guard.dry_run,
                     "protected_paths": len(guard.protected_paths()),
                     "capabilities": guard.authorization_capabilities(),
+                    "registry_sequence": guard.installed_sequence(),
                 },
             )
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path != "/api/v1/critical-file/patch":
+            if self.path not in ("/api/v1/critical-file/patch", "/api/v1/registry", "/api/v1/rfi"):
                 self._send(404, {"error": "not found"})
                 return
             client = self.client_address[0]
@@ -729,8 +1150,14 @@ def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface 
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 self._send(400, {"error": str(exc), "code": "malformed_packet"})
                 return
+            handlers = {
+                "/api/v1/registry": guard.handle_registry,
+                "/api/v1/rfi": guard.handle_rfi,
+                "/api/v1/critical-file/patch": guard.handle_patch,
+            }
+            handler = handlers[self.path]
             try:
-                self._send(200, guard.handle_patch(packet))
+                self._send(200, handler(packet))
             except Refusal as refusal:
                 self._send(refusal.status, {"error": refusal.detail or refusal.code, "code": refusal.code})
             except Exception as exc:  # pragma: no cover - defensive

@@ -28,7 +28,8 @@ ListenPort = ${NODE_LISTEN_PORT}
 PrivateKey = ${NODE_PRIVATE_KEY}
 
 # MTU 1400 keeps the tunnel clear of the 1500-byte path MTU when the node is
-# also carrying RoCEv2/TCP on the same NIC.
+# also carrying ordinary TCP on the same NIC. The deployed AGX fleet has no
+# RoCEv2.
 MTU = 1400
 
 [Peer]

@@ -497,3 +497,113 @@ def test_env_library_stays_quiet_when_executed() -> None:
     proc = subprocess.run([str(SCRIPTS / "sparknet-env.sh")], capture_output=True, text=True, check=False, timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "", f"sourced env library leaked to stdout: {proc.stdout!r}"
+
+
+# --- Step 66C: the platform declaration in 00_System --------------------------
+
+
+def _flat_frontmatter(path: Path) -> dict[str, str]:
+    """Parse the flat top-level frontmatter of a record. No YAML dependency."""
+    text = path.read_text()
+    assert text.startswith("---\n"), f"{path.name} has no frontmatter block"
+    block = text.split("---", 2)[1]
+    return dict(re.findall(r"^(\w+): (.*)$", block, re.MULTILINE))
+
+
+PLATFORM_FIELDS = (
+    "type",
+    "schema",
+    "status",
+    "captured_at",
+    "hostname",
+    "os",
+    "machine",
+    "release",
+    "platform",
+    "running_as_root",
+    "snapshot_ref",
+)
+
+
+def _assert_matches_snapshot(record: dict[str, str], snapshot: dict) -> None:
+    system = snapshot["system"]
+    expected = {
+        "type": "platform-record",
+        "schema": "sparknet-platform/1",
+        "status": "captured",
+        "captured_at": snapshot["timestamp"],
+        "hostname": system["hostname"],
+        "os": system["os"],
+        "machine": system["machine"],
+        "release": system["release"],
+        "platform": system["platform"],
+        "running_as_root": "true" if snapshot["privilege_boundaries"]["is_root"] else "false",
+        "snapshot_ref": "manifests/user-env-manifest.json",
+    }
+    for key, want in expected.items():
+        assert record[key] == str(want), f"{key}: record says {record[key]!r}, snapshot says {want!r}"
+
+
+def test_the_committed_platform_record_agrees_with_the_committed_snapshot() -> None:
+    """Two files describe one host, so a test has to hold them together.
+
+    Neither is derived from the other at read time — the vault record is what an
+    agent reads and the manifest is what tooling reads — so without this they
+    drift silently, and an agent reading the stale one reasons about a machine it
+    is not on.
+    """
+    record = _flat_frontmatter(VAULT_ROOT / "00_System" / "platform.md")
+    snapshot = json.loads((VAULT_ROOT / "manifests" / "user-env-manifest.json").read_text())
+    assert set(record) == set(PLATFORM_FIELDS), "the record's fields changed; update the contract with them"
+    _assert_matches_snapshot(record, snapshot)
+
+
+def test_identity_capture_writes_both_files_from_one_probe(tmp_path: Path) -> None:
+    """The guarantee is structural: one probe, two files, no way to disagree."""
+    dest = tmp_path / "vault"
+    shutil.copytree(
+        VAULT_ROOT,
+        dest,
+        ignore=shutil.ignore_patterns(".git", ".venv", ".state", ".cache", "__pycache__", "references", ".opencode"),
+    )
+    (dest / "00_System" / "platform.md").unlink()
+    proc = subprocess.run(
+        [str(dest / "scripts" / "sparknet-identity-capture.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    written = dest / "00_System" / "platform.md"
+    assert written.is_file(), "the capture must write the vault-facing declaration, not only the manifest"
+    _assert_matches_snapshot(
+        _flat_frontmatter(written),
+        json.loads((dest / "manifests" / "user-env-manifest.json").read_text()),
+    )
+
+
+def test_the_platform_record_is_declared_in_the_contract() -> None:
+    """The schema is the authority on the record's shape, so it must name it."""
+    schema = json.loads((VAULT_ROOT.parent / "contracts" / "tracking-schema.json").read_text())
+    declared = schema["platform_record"]
+    assert declared["path"] == "00_System/platform.md"
+    assert declared["schema"] == "sparknet-platform/1"
+    assert set(declared["fields"]) == set(PLATFORM_FIELDS), (
+        "the contract's field list and the record's frontmatter disagree"
+    )
+    assert "agreement_rule" in declared and "snapshot" in declared["agreement_rule"].lower()
+    assert "00_System" in schema["layout"]["dirs"]
+    assert "platform record" in schema["layout"]["dirs"]["00_System"]
+
+
+def test_the_template_ships_uncaptured() -> None:
+    """A fresh vault must not inherit this host's identity."""
+    template = VAULT_ROOT / "deployment" / "vault-template" / "00_System" / "platform.md"
+    record = _flat_frontmatter(template)
+    assert set(record) == set(PLATFORM_FIELDS)
+    assert record["status"] == "uncaptured"
+    live = _flat_frontmatter(VAULT_ROOT / "00_System" / "platform.md")
+    for key in ("hostname", "machine", "platform", "release", "captured_at"):
+        assert record[key] == "null", f"the template leaks {key}"
+        assert live[key] != "null", f"the live record is missing {key}"

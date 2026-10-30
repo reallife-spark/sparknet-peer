@@ -13,6 +13,17 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=raxxar
+# Reflex is local-first: `local` uses the on-node reranker/LLM and never
+# egresses. Broker mode is opt-in and points at the Master's 4224 endpoint;
+# `/v1/reflex/*` stays loopback-only regardless.
+EnvironmentFile=-%h/.env
+Environment=SPARKNET_REFLEX_MODE=local
+Environment=SPARKNET_REFLEX_BACKEND=local
+Environment=SPARKNET_REFLEX_ALLOW_EGRESS=0
+Environment=SPARKNET_REFLEX_LOCAL_URL=http://127.0.0.1:8000
+Environment=SPARKNET_REFLEX_LOCAL_MODEL=local
+Environment=SPARKNET_REFLEX_BROKER_URL=http://10.100.0.1:4224
+Environment=SPARKNET_REFLEX_TIMEOUT=2.0
 # No WorkingDirectory: the generated shim resolves the vault. --bind is
 # repeatable (one listener per address); the overlay address is this node's
 # authorized 10.100.0.2/32 from manifests/node-identity.json.

@@ -32,6 +32,10 @@ and answer clearly.
    peer's chat agent, not the fabric's: cross-role questions go back to the
    fabric root's own agent. Say which vault you read from when it matters.
 
+3. **Read the identity pages.** `AGENTS.md`, `MISSION.md` and `INTENT.md` define
+   the peer charter, its purpose and its design contract. Read them before
+   answering a question about scope, authority or expected behaviour.
+
 ## Answering
 
 - Prefer the `/wiki-query` skill to find pages; read the pages that matter

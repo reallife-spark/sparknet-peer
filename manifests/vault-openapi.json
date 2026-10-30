@@ -79,6 +79,19 @@
         }
       }
     },
+    "/v1/reflex/decide": {
+      "post": {
+        "operationId": "reflex_decide",
+        "summary": "Ask the reflex sensor for a typed decision; abstains on doubt and never grants authority",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        },
+        "responses": {
+          "200": { "description": "a decision (accept/reject/abstain); advisory only", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
     "/vault/list": {
       "get": {
         "operationId": "vault_list",

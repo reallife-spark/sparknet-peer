@@ -105,9 +105,14 @@ Tearing down the anchor is either:
 
 ## Egress restriction
 
-The WLAN guard pins WLAN egress to `10.100.0.1` only
-(`scripts/sparknet-wlan-guard.sh`). This is intentional: a revoked node keeps its
-local vault working but has no other network path.
+The WLAN guard is a **template only** (`scripts/sparknet-wlan-guard.sh`): it
+emits a spec nftables fragment, does not apply it, and `nft` is absent on the
+fleet. It is not the deployed egress control. The peer's live control is the
+iptables `SPARKNET-FW-IN`/`SPARKNET-FW-FWD` firewall, which allows loopback,
+LAN, the `wg1` overlay, Docker bridges and link-local for the published surfaces.
+It does not pin all WLAN egress to `10.100.0.1`. A revoked node keeps its local
+vault and LAN surface working but cannot receive a signed instruction over the
+overlay, so it is inert for guarded actions rather than offline.
 
 ## WLAN uplink stability (AGX hosts)
 
@@ -145,7 +150,7 @@ module and no `CAP_NET_ADMIN`. These require a privileged target node and are
 
 - [ ] live handshake and `PersistentKeepalive` behaviour over the real uplink
 - [ ] `chattr +i` enforcement on the rendered config
-- [ ] `nftables` egress rules taking effect
+- [ ] iptables `SPARKNET-FW-*` egress rules taking effect (the `wlan-guard` template's nft fragment is not applied)
 - [ ] KillSwitch teardown and recovery
 
 Everything that *can* be checked without root is covered by

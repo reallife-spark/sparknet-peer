@@ -1,2 +1,4 @@
+# LEGACY TEMPLATE ONLY — not installed, and `nft` is absent on the fleet.
+# The deployed peer firewall is iptables: scripts/sparknet-firewall.sh.
 # WLAN emergency routing policy (template)
 # Drop wlan0 except to/from Master Anchor 10.100.0.1

@@ -20,13 +20,15 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 # The suite must never touch the real blockchain/ledger.json; tests that need a
 # ledger copy it into tmp_path themselves.
-norecursedirs = [".venv", ".state", ".cache", "references", "node_modules"]
+norecursedirs = [".venv", ".state", ".cache", "references", "node_modules", ".opencode"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-# The services are standalone scripts run directly from the vault.
-exclude = [".venv", ".state", ".cache", "references"]
+# The services are standalone scripts run directly from the vault. The
+# role-local catalog is vendored third-party content; `make skills-check`
+# hashes it instead of letting a role-local lint gate rewrite it.
+exclude = [".venv", ".state", ".cache", "references", ".opencode"]
 # `ruff format` is a Python-only gate. Without this it also rewrites fenced
 # code blocks inside the Markdown docs, which is not what this vault wants.
 include = ["*.py", "tests/**/*.py", "services/**/*.py"]

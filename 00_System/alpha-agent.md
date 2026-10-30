@@ -19,7 +19,8 @@ numbered path; the shim exists so the vendored wiki suite and older
 instructions still resolve.
 
 `_staging/` is real, not a shim (it is the skill review queue). `AGENTS.md`,
-`MEMORY.md`, `PLAN.md` and `README.md` stay at the root on purpose.
+`MISSION.md`, `INTENT.md`, `MEMORY.md`, `PLAN.md` and `README.md` stay at the
+root on purpose.
 
 ## 2. Where you may write
 
@@ -31,18 +32,24 @@ instructions still resolve.
 | `00_System/` | governance. Rules change in the same commit as the code that enforces them; the user record is filled once and never re-keyed without `--force`. |
 | `07_Archives/` | superseded material and snapshots. Prefer archiving over deleting. |
 
-Inbox dispatch (from the contract; **the transport is specified, not built**):
+Inbox dispatch (from the contract; **the master-node leg now has a listener —
+the email and peer-to-peer legs do not**):
 
 - source is the master-node → may be executed on notice: the Master is the
   signing role;
 - source is another peer → executes only on **acceptance**, reviewed and
-  sanitized by a reviewer agent first (`agents/vault-curator`);
+  sanitized by a reviewer agent first (`agents/vault-curator`); the recorded
+  acceptance must be accepted, `sanitized: true`, and name that reviewer before
+  the reviewer will run;
 - source is email → the sender must be on `authorised_senders` in
   `00_System/user.md`, then it is treated as peer-origin.
 
-Nothing here may claim delivery works until a listener exists and
-`contracts/ports.json` says so. What *is* built is the local half: an item
-arrives with
+A master-node answer now arrives over a wire: the Master pushes a signed RFI
+answer to `POST /api/v1/rfi` on this node's guard (9090), which installs it into
+`01_Inbox/` and records the `inbox_acceptance` block (`contracts/rfi-schema.json`,
+fabric Step 67D); `contracts/ports.json` names the route. The email service and
+the peer-to-peer leg are still specified, not built. The local half is built too:
+an item arrives with
 
 ```bash
 ../shared/sparknet-provenance.py ingest - --source peer-node
@@ -112,5 +119,5 @@ There is no `approvals.md` and nothing may be coded to one.
   when it was captured; current surfaces must not hard-code host paths.
 - Logs and telemetry → `/mnt/log/`, not the vault. Runtime caches →
   `$OPENCODE_DATA_DIR`.
-- Never claim live verification of WireGuard, nftables, `chattr +i`,
+- Never claim live verification of WireGuard, iptables, `chattr +i`,
   KillSwitch or systemd behaviour: this host has none of them.

@@ -1,0 +1,21 @@
+# The peer's telemetry pusher — evidence to the Master, never authority.
+#
+# Runs as the node user: it reads the vault's manifests and /proc and writes
+# nothing. It pushes only when the Master-signed registry grants `telemetry`, so
+# an ungranted peer exits 0 having sent nothing (the push-side mirror of the
+# Master intake's capability gate).
+#
+# The timer is what makes this periodic. Enable it with:
+#   systemctl --user enable --now sparknet-telemetry-push.timer
+
+[Unit]
+Description=Sparknet telemetry push (peer -> Master evidence, no authority)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-telemetry-push
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
