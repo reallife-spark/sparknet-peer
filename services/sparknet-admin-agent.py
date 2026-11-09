@@ -36,13 +36,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+ROLE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROLE_ROOT.parent / "shared"))
+try:
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
+
 
 #: The closed set of auth events this node records. Everything in the Open WebUI
 #: auth catalog is a *success* event, so no failure capture is possible here by
@@ -282,69 +292,45 @@ def snapshot_users(base: str, token: str, state_dir: Path) -> Path:
     return out
 
 
-class EventWebhookHandler(BaseHTTPRequestHandler):
-    """Loopback receiver for Open WebUI auth-event webhooks."""
+def _load_http() -> Any:
+    return load_shared("sparknet-http.py", "sparknet_http_admin_agent", dirs=[ROLE_ROOT.parent / "shared"])
 
-    spool: Path = Path("/nonexistent")
 
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            payload = json.dumps({"ok": True}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-        else:
-            self.send_response(404)
-            self.end_headers()
+def build_listener(spool: Path, host: str, port: int) -> Any:
+    """The loopback auth-event listener, with the one route-table policy."""
+    http = _load_http()
 
-    def do_POST(self) -> None:
-        if self.path != "/events":
-            self.send_response(404)
-            self.end_headers()
-            return
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(raw.decode("utf-8", "replace"))
-        except (ValueError, json.JSONDecodeError):
-            self.send_response(400)
-            self.end_headers()
-            return
-        record = normalize_event(payload)
+    def health(request: Any = None) -> Any:
+        return http.Response(200, {"ok": True})
+
+    def events(request: Any) -> Any:
+        record = normalize_event(request.json)
         if record is None:
             # Out of allow-list, or unnameable. Acknowledge silently: Open WebUI
             # will only retry failures, and an ignored known-good name is not a
             # failure the webhook engine should retry against this endpoint.
-            self.send_response(202)
-            self.end_headers()
-            return
-        append_event(EventWebhookHandler.spool, record)
-        self.send_response(204)
-        self.end_headers()
+            return http.Response(202, raw=b"")
+        append_event(spool, record)
+        return http.Response(204, raw=b"")
 
-    def log_message(self, format: str, *args: Any) -> None:
-        # Keep the journal clean; the spool is the record.
-        return
-
-
-class AdminEventServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def __init__(self, addr: tuple[str, int], spool: Path) -> None:
-        super().__init__(addr, EventWebhookHandler)
-        EventWebhookHandler.spool = spool
+    return http.listen(
+        [
+            http.Route("/health", health, method="GET", source="loopback"),
+            http.Route("/events", events, method="POST", source="loopback"),
+        ],
+        name="admin-agent",
+        bind=host,
+        port=port,
+    )
 
 
 def run_serve(spool: Path, host: str, port: int, once: bool = False) -> None:
-    server = AdminEventServer((host, port), spool)
+    listener = build_listener(spool, host, port)
     log(f"admin-event listener on {host}:{port} -> {spool}")
     if once:
-        server.handle_request()
+        listener.servers[0].handle_request()
     else:
-        server.serve_forever()
+        listener.wait()
 
 
 def load_admin_password(password_file: Path) -> str:

@@ -49,7 +49,6 @@ import sys
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -1133,95 +1132,86 @@ class Guard:
         }
 
 
-def _make_handler(guard: Guard, server_name: str):  # noqa: C901 - HTTP surface is inherently branchy
-    _shared_http = _load_http_module()
+def build_listener(guard: Guard, server_name: str, *, bind: str, port: int, handler_class: Any = None) -> Any:
+    """Build the guard's route-table listener; the caller owns start/stop."""
+    http = _load_http_module()
 
-    class Handler(_shared_http.TimeoutHandler):
-        server_version = "sparknet-guard/1.0"
+    def permitted() -> set[str]:
+        return guard.permitted_sources()
 
-        def log_message(self, fmt: str, *args: Any) -> None:  # quieter than BaseHTTPRequestHandler
-            print(f"[guard] {fmt % args}", file=sys.stderr)
+    def status(request: Any = None) -> tuple[int, dict[str, Any]]:
+        return 200, {
+            "service": server_name,
+            "mode": guard.mode(),
+            "apply_enabled": guard.apply_enabled,
+            "dry_run": guard.dry_run,
+            "protected_paths": len(guard.protected_paths()),
+            "capabilities": guard.authorization_capabilities(),
+            "registry_sequence": guard.installed_sequence(),
+        }
 
-        def _send(self, status: int, body: dict[str, Any]) -> None:
-            blob = json.dumps(body).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(blob)))
-            self.end_headers()
-            self.wfile.write(blob)
-
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path != "/api/v1/status":
-                self._send(404, {"error": "not found"})
-                return
-            self._send(
-                200,
-                {
-                    "service": server_name,
-                    "mode": guard.mode(),
-                    "apply_enabled": guard.apply_enabled,
-                    "dry_run": guard.dry_run,
-                    "protected_paths": len(guard.protected_paths()),
-                    "capabilities": guard.authorization_capabilities(),
-                    "registry_sequence": guard.installed_sequence(),
-                },
-            )
-
-        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path not in ("/api/v1/critical-file/patch", "/api/v1/registry", "/api/v1/rfi"):
-                self._send(404, {"error": "not found"})
-                return
-            client = self.client_address[0]
-            permitted = guard.permitted_sources()
-            # Loopback is allowed so the daemon is testable and so local tooling
-            # can reach it. Every other accepted source must be the Master
-            # anchor: the server binds the node's own overlay address, so a
-            # legitimate request arrives *from* the Master, never from us.
-            if client not in permitted:
-                # "permitted" is deliberately absent from the body: disclosing
-                # the source allow-list to a caller the protocol already
-                # rejected hands an off-overlay probe the exact addresses to
-                # spoof next time. The refusal is reason enough.
-                self._send(
-                    403,
-                    {
-                        "error": "off-overlay",
-                        "code": "off_overlay",
-                        "client": client,
-                    },
-                )
-                return
+    def post(handler: Any) -> Any:
+        def route(request: Any) -> tuple[int, dict[str, Any]]:
+            packet = request.json
+            if not isinstance(packet, dict):
+                raise Refusal(400, "malformed_packet", "the packet must be a JSON object")
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._send(400, {"error": "bad content-length", "code": "malformed_packet"})
-                return
-            if length <= 0 or length > 8 * 1024 * 1024:
-                self._send(400, {"error": "bad body length", "code": "malformed_packet"})
-                return
-            try:
-                packet = json.loads(self.rfile.read(length).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                self._send(400, {"error": str(exc), "code": "malformed_packet"})
-                return
-            handlers = {
-                "/api/v1/registry": guard.handle_registry,
-                "/api/v1/rfi": guard.handle_rfi,
-                "/api/v1/critical-file/patch": guard.handle_patch,
-            }
-            handler = handlers[self.path]
-            try:
-                self._send(200, handler(packet))
+                return 200, handler(packet)
             except Refusal as refusal:
-                self._send(refusal.status, {"error": refusal.detail or refusal.code, "code": refusal.code})
+                return refusal.status, {"error": refusal.detail or refusal.code, "code": refusal.code}
             except Exception as exc:  # pragma: no cover - defensive
-                # Never echo the exception: it can name files, keys or paths
-                # the caller has no right to know. Log it where only an
-                # operator will read it.
-                print(f"[guard] internal error on {self.path}: {exc!r}", file=sys.stderr)
-                self._send(500, {"error": "internal error", "code": "internal_error"})
+                print(f"[guard] internal error on {request.path}: {exc!r}", file=sys.stderr)
+                return 500, {"error": "internal error", "code": "internal_error"}
 
-    return Handler
+        return route
+
+    def refusal(exc: BaseException) -> tuple[int, dict[str, Any]]:
+        if isinstance(exc, http.RequestError):
+            if exc.reason in {"source-refused", "not-overlay", "not-loopback"}:
+                return exc.status, {"error": "off-overlay", "code": "off_overlay"}
+            if exc.reason == "malformed":
+                return exc.status, {"error": exc.detail or "malformed packet", "code": "malformed_packet"}
+            return exc.status, {"error": exc.detail or exc.reason, "code": exc.reason}
+        return 500, {"error": "internal error", "code": "internal_error"}
+
+    return http.listen(
+        [
+            http.Route(
+                "/api/v1/status",
+                status,
+                method="GET",
+                allowed_sources=permitted,
+                parse_json=False,
+                max_body=0,
+            ),
+            http.Route(
+                "/api/v1/critical-file/patch",
+                post(guard.handle_patch),
+                method="POST",
+                allowed_sources=permitted,
+                max_body=8 * 1024 * 1024,
+            ),
+            http.Route(
+                "/api/v1/registry",
+                post(guard.handle_registry),
+                method="POST",
+                allowed_sources=permitted,
+                max_body=8 * 1024 * 1024,
+            ),
+            http.Route(
+                "/api/v1/rfi",
+                post(guard.handle_rfi),
+                method="POST",
+                allowed_sources=permitted,
+                max_body=8 * 1024 * 1024,
+            ),
+        ],
+        name="guard",
+        bind=bind,
+        port=port,
+        refusal=refusal,
+        handler_class=handler_class,
+    )
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -1337,13 +1327,12 @@ def main(argv: list[str] | None = None) -> int:
         f"[guard] mode={mode} listening on {listen}:{args.port} "
         f"(apply_enabled={args.apply_enabled}, dry_run={args.dry_run})"
     )
-    server = ThreadingHTTPServer((listen, args.port), _make_handler(guard, f"sparknet-guard@{listen}"))
+    listener = build_listener(guard, f"sparknet-guard@{listen}", bind=listen, port=args.port)
     try:
-        server.serve_forever()
+        listener.wait()
     except KeyboardInterrupt:
         print("[guard] shutting down")
-    finally:
-        server.server_close()
+        listener.stop()
     return 0
 
 

@@ -61,7 +61,6 @@ except ImportError:  # pragma: no cover - Python 3.8
     from typing import Callable  # noqa: UP035
 
 from datetime import datetime, timezone
-from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -1993,119 +1992,78 @@ def _make_router(states: list[str]) -> Callable[[str, str, dict[str, Any], dict[
     return router
 
 
-def _make_handler(bridge: Bridge, states: list[str], signed_router: Callable) -> type:
-    """A handler that multiplexes the signed envelope and the plain surface.
+def build_listener(
+    bridge: Bridge,
+    states: list[str],
+    *,
+    bind: str | tuple[str, ...],
+    port: int,
+    public_key: Any | None = None,
+    public_keys: dict[str, Any] | None = None,
+    clock: Callable[[], datetime] | None = None,
+    ready: Callable[[], None] | None = None,
+    handler_class: Any = None,
+) -> Any:
+    """Build the combined signed + plain listener; the caller owns start/stop."""
+    http = bridge.http
+    signed_router = _make_router(states)
 
-    The OpenAI/session/vault routes are loopback-local: the node's own Open
-    WebUI and agent sessions are their only clients, and a caller from the
-    overlay is refused before the request is read. ``/admin/*`` is the
-    exception — the Master reaches it over the overlay, where the signed
-    request ladder is the guard. The signed personality passes through to
-    shared/sparknet-http.py's behavior untouched, so the fabric's existing
-    transport tests keep applying.
-    """
+    def signed(request: Any) -> Any:
+        return signed_router(request.method, request.path, request.json or {}, request.identity)
 
-    class Handler(bridge.http._Handler):
-        server_version = "sparknet-bridge/1"
+    def plain(request: Any) -> Any:
+        try:
+            auth = request.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                raise _HttpRequestError(401, "missing-grant", "Authorization: Bearer <grant> is required")
+            grant = bridge.decode_grant(auth[len("Bearer ") :].strip())
+            bridge.verify_grant(grant, allow_spent_nonce=bridge.session_allows_reuse(grant))
+            return bridge.handle(request.method, request.path, request.query, request.json or {}, grant)
+        except _HttpRequestError as exc:
+            raise http.RequestError(exc.status, exc.reason, exc.detail) from exc
 
-        def _is_plain(self) -> bool:
-            return self.path.split("?", 1)[0].startswith(PLAIN_PREFIXES)
+    def admin(request: Any) -> Any:
+        try:
+            return bridge.handle_admin(request.method, request.path, request.json or {})
+        except _HttpRequestError as exc:
+            raise http.RequestError(exc.status, exc.reason, exc.detail) from exc
 
-        def _plain(self, method: str, body: dict[str, Any]) -> None:
-            try:
-                path, _, raw_query = self.path.partition("?")
-                # Route-class source policy: the OpenAI/session/vault routes are
-                # loopback-only; ``/admin/*`` is the one surface the Master may
-                # reach over the overlay (fabric Step 29 Phase 5). This is the
-                # same check the shared signed handler applies, so one tuple
-                # (``LOCAL_ONLY_PREFIXES``) names the local personality.
-                source = bridge.http.source_kind(self.client_address)
-                reason = bridge.http.check_source_policy(path, source, LOCAL_ONLY_PREFIXES)
-                if reason is not None:
-                    raise _HttpRequestError(
-                        403, reason, f"{path} is loopback-only; the caller is from the {source} personality"
-                    )
-                if path.startswith(ADMIN_PREFIX):
-                    code, payload = bridge.handle_admin(method, path, body)
-                    self._send(code, payload)
-                    return
-                if path.startswith("/v1/cluster/"):
-                    # Cluster jobs carry their own signed envelope and are
-                    # checked against the registry in handle_cluster. Polling is
-                    # Master-only: the job id is not a bearer credential.
-                    if method == "GET" and not path.startswith(("/v1/cluster/status/", "/v1/cluster/result/")):
-                        raise _HttpRequestError(404, "not-found", "unknown cluster route")
-                    if (
-                        method == "GET"
-                        and source != "loopback"
-                        and self.client_address[0] != os.environ.get("SPARKNET_MASTER_OVERLAY", "10.100.0.1")
-                    ):
-                        raise _HttpRequestError(403, "master-only", "cluster status/result is Master-only")
-                    code, payload = bridge.handle_cluster(method, path, body)
-                    self._send(code, payload)
-                    return
-                auth = self.headers.get("Authorization", "")
-                if not auth.startswith("Bearer "):
-                    raise _HttpRequestError(401, "missing-grant", "Authorization: Bearer <grant> is required")
-                grant = bridge.decode_grant(auth[len("Bearer ") :].strip())
-                bridge.verify_grant(grant, allow_spent_nonce=bridge.session_allows_reuse(grant))
-                query = urllib.parse.parse_qs(raw_query)
-                code, payload = bridge.handle(method, path, query, body, grant)
-            except _HttpRequestError as exc:
-                self._send(exc.status, {"ok": False, "reason": exc.reason, "detail": exc.detail})
-                return
-            except Exception as exc:  # noqa: BLE001 - never leak internals to a caller
-                print(f"[bridge] internal error on {self.command} {self.path}: {exc!r}", file=sys.stderr)
-                self._send(500, {"ok": False, "reason": "internal"})
-                return
-            self._send(code, payload)
+    def cluster(request: Any) -> Any:
+        try:
+            if request.method == "GET" and not request.path.startswith(("/v1/cluster/status/", "/v1/cluster/result/")):
+                raise _HttpRequestError(404, "not-found", "unknown cluster route")
+            if (
+                request.method == "GET"
+                and request.source != "loopback"
+                and request.client[0] != os.environ.get("SPARKNET_MASTER_OVERLAY", "10.100.0.1")
+            ):
+                raise _HttpRequestError(403, "master-only", "cluster status/result is Master-only")
+            return bridge.handle_cluster(request.method, request.path, request.json or {})
+        except _HttpRequestError as exc:
+            raise http.RequestError(exc.status, exc.reason, exc.detail) from exc
 
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's name
-            if self._is_plain():
-                self._plain("GET", {})
-                return
-            super().do_GET()
+    def refusal(exc: BaseException) -> tuple[int, dict[str, Any]]:
+        if isinstance(exc, http.RequestError):
+            return exc.status, {"ok": False, "reason": exc.reason, "detail": exc.detail}
+        return 500, {"ok": False, "reason": "internal"}
 
-        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's name
-            if self._is_plain():
-                try:
-                    raw = self._read_body()
-                except bridge.http.RequestError as exc:
-                    self._refuse(exc)
-                    return
-                try:
-                    body = json.loads(raw.decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    self._refuse(bridge.http.RequestError(400, "malformed", f"body is not JSON: {exc}"))
-                    return
-                if not isinstance(body, dict):
-                    self._refuse(bridge.http.RequestError(400, "malformed", "body is not a JSON object"))
-                    return
-                self._plain("POST", body)
-                return
-            super().do_POST()
-
-        def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's name
-            if self._is_plain():
-                self._plain("DELETE", {})
-                return
-            super().do_DELETE()
-
-    return Handler
-
-
-def _configure_server(server, *, http, signed_router, public_key, clock):
-    """Stamp the attributes the shared handler reads off ``self.server``."""
-    server.router = signed_router  # type: ignore[attr-defined] - signed personality
-    server.public_key = public_key  # type: ignore[attr-defined]
-    server.clock = clock  # type: ignore[attr-defined]
-    server.max_age_seconds = http.DEFAULT_MAX_AGE_SECONDS  # type: ignore[attr-defined]
-    # The local personality: OpenAI/session/vault routes are reachable only from
-    # loopback even when the bridge also listens on an overlay address. ``/admin/``
-    # and the signed ``/v1/status`` are deliberately *not* named, so the Master
-    # can reach the signed admin surface over the overlay (fabric Step 29).
-    server.loopback_only_routes = LOCAL_ONLY_PREFIXES  # type: ignore[attr-defined]
-    return server
+    return http.listen(
+        [
+            http.Route("/v1/status", signed, method="*", auth="signed"),
+            http.Route("/admin", admin, method="*", prefix=True, source="any"),
+            http.Route("/v1/cluster", cluster, method="*", prefix=True, source="any"),
+            http.Route("/", plain, method="*", prefix=True, source="loopback"),
+        ],
+        name="dispatch-bridge",
+        bind=bind,
+        port=port,
+        public_key=public_key,
+        public_keys=public_keys,
+        now=clock,
+        ready=ready,
+        refusal=refusal,
+        handler_class=handler_class,
+    )
 
 
 def serve(
@@ -2118,13 +2076,7 @@ def serve(
     ready=None,
     clock=None,
 ):
-    """Serve the combined surface on (bind, port). Refuses to bind unsigned.
-
-    ``bind`` is one address, or an iterable of addresses. Listing loopback *and*
-    the node's overlay address in one call is how Phase 5 exposes ``/admin/*`` to
-    the Master without dropping the node's own loopback consumers — and without
-    ever binding a wildcard, which would put the bridge on the LAN.
-    """
+    """Serve the combined surface on (bind, port). Refuses to bind unsigned."""
     http = _load_http()
     authz = http._load_authz()
     private_key = _load_keypair(vault_root, authz)
@@ -2136,37 +2088,19 @@ def serve(
         log("ERROR", "no bind address given")
         return 1
     bridge = Bridge(vault_root, registry=registry, node_identity=node_identity, clock=clock)
-    signed_router = _make_router(STATES)
-    handler = _make_handler(bridge, STATES, signed_router)
-    servers = []
-    for address in binds:
-        server = ThreadingHTTPServer((address, port), handler)
-        _configure_server(
-            server,
-            http=http,
-            signed_router=signed_router,
-            public_key=private_key.public_key(),
-            clock=clock,
-        )
-        servers.append(server)
-    if ready is not None:
-        ready()
-    for server in servers:
-        log("INFO", f"serving signed + OpenAI surface on {server.server_address[0]}:{server.server_address[1]}")
+    listener = build_listener(
+        bridge,
+        STATES,
+        bind=binds,
+        port=port,
+        public_key=private_key.public_key(),
+        clock=clock,
+        ready=ready,
+    )
     log("INFO", f"signed + OpenAI surface (PPP states: {', '.join(STATES)})")
     log("INFO", APPROVALS_NOTE)
     log("INFO", f"models: {', '.join(m['id'] for m in _available_models(vault_root)) or '(none)'}")
-    extra = [threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True) for s in servers[1:]]
-    for thread in extra:
-        thread.start()
-    try:
-        servers[0].serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        for server in servers:
-            server.shutdown()
-            server.server_close()
+    listener.wait()
     return 0
 
 

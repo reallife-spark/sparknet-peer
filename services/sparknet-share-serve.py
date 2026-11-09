@@ -619,26 +619,35 @@ def bind_servers(
     """
     transport = http or _load_http()
     router = router_for(service)
-    servers = []
+    listeners = []
     try:
         for port in ports:
-            if public_keys:
-                servers.append(transport.serve(router, bind=bind, port=int(port), public_keys=public_keys))
-            else:
-                servers.append(transport.serve(router, bind=bind, port=int(port), public_key=public_key))
+            route = transport.Route(
+                "/",
+                lambda request: router(request.method, request.path, request.json or {}, request.identity),
+                auth="signed",
+                prefix=True,
+            )
+            listeners.append(
+                transport.listen(
+                    [route],
+                    name="share-serve",
+                    bind=bind,
+                    port=int(port),
+                    public_keys=public_keys or None,
+                    public_key=None if public_keys else public_key,
+                )
+            )
     except Exception:
-        for server in servers:
-            server.server_close()
+        for listener in listeners:
+            listener.stop()
         raise
-    return servers
+    return listeners
 
 
-def _serve_forever(servers: list[Any], *, stopping: threading.Event | None = None) -> None:
-    threads = [
-        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True) for server in servers
-    ]
-    for thread in threads:
-        thread.start()
+def _serve_forever(listeners: list[Any], *, stopping: threading.Event | None = None) -> None:
+    for listener in listeners:
+        listener.start()
     stopping = stopping or threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     signal.signal(signal.SIGINT, lambda *_: stopping.set())
@@ -646,11 +655,8 @@ def _serve_forever(servers: list[Any], *, stopping: threading.Event | None = Non
         while not stopping.wait(1.0):
             pass
     finally:
-        for server in servers:
-            server.shutdown()
-            server.server_close()
-        for thread in threads:
-            thread.join(timeout=5)
+        for listener in listeners:
+            listener.stop()
 
 
 def _parse_ports(values: list[str]) -> tuple[int, ...]:

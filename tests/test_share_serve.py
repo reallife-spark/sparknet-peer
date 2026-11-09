@@ -108,22 +108,15 @@ class Wire:
             public_key=public_key,
             public_keys=public_keys,
         )
-        self.threads = [
-            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
-            for server in self.servers
-        ]
-        for thread in self.threads:
-            thread.start()
+        for listener in self.servers:
+            listener.start()
 
     def url(self, index: int = 0) -> str:
         return f"http://127.0.0.1:{self.ports[index]}"
 
     def close(self) -> None:
-        for server in self.servers:
-            server.shutdown()
-            server.server_close()
-        for thread in self.threads:
-            thread.join(timeout=3)
+        for listener in self.servers:
+            listener.stop()
 
 
 @pytest.fixture

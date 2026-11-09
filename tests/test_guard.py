@@ -20,7 +20,6 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -96,10 +95,9 @@ class Harness:
             master_pubkey=master_pubkey,
             dry_run=dry_run,
         )
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), guardmod._make_handler(self.guard, "test-guard"))
-        self.port = self.server.server_address[1]
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        self.listener = guardmod.build_listener(self.guard, "test-guard", bind="127.0.0.1", port=0)
+        self.listener.start()
+        self.port = self.listener.servers[0].server_address[1]
 
     def post(self, packet: dict, path: str = "/api/v1/critical-file/patch") -> tuple[int, dict]:
         request = urllib.request.Request(
@@ -122,8 +120,7 @@ class Harness:
             return exc.code, json.loads(exc.read())
 
     def stop(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+        self.listener.stop()
 
 
 @pytest.fixture
@@ -702,14 +699,15 @@ def _post_patch(handler_cls, port: int) -> int:
     return 200
 
 
-def _serve_with_fake_client(handler_cls, client_ip: str):
+def _serve_with_fake_client(guard, client_ip: str):
     """Serve the guard while pretending every peer is `client_ip`.
 
     The guard reads `self.client_address[0]`, the real TCP peer, so the test has
     to shadow the attribute rather than override address_string().
     """
+    http = guardmod._load_http_module()
 
-    class FakeClientHandler(handler_cls):  # type: ignore[misc, valid-type]
+    class FakeClientHandler(http._RouteHandler):
         @property
         def client_address(self):  # noqa: ANN001 - shadows BaseRequestHandler
             return (client_ip, 54321)
@@ -718,21 +716,18 @@ def _serve_with_fake_client(handler_cls, client_ip: str):
         def client_address(self, _value):  # noqa: ANN001 - socketserver assigns on init
             pass  # keep pretending, whatever the real peer was
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), FakeClientHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, server.server_address[1]
+    listener = guardmod.build_listener(guard, "test-guard", bind="127.0.0.1", port=0, handler_class=FakeClientHandler)
+    listener.start()
+    return listener, listener.servers[0].server_address[1]
 
 
 def test_neighbouring_overlay_node_is_rejected_with_403_off_overlay() -> None:
     guard = guardmod.Guard(vault_root=VAULT_ROOT)
-    handler = guardmod._make_handler(guard, "test-guard")
-    server, port = _serve_with_fake_client(handler, "10.100.0.2")
+    server, port = _serve_with_fake_client(guard, "10.100.0.2")
     try:
-        assert _post_patch(handler, port) == 403
+        assert _post_patch(guard, port) == 403
     finally:
-        server.shutdown()
-        server.server_close()
+        server.stop()
 
 
 def test_master_request_passes_the_source_gate() -> None:
@@ -742,15 +737,13 @@ def test_master_request_passes_the_source_gate() -> None:
     exactly what proves the source gate let it through rather than 403-ing it.
     """
     guard = guardmod.Guard(vault_root=VAULT_ROOT)
-    handler = guardmod._make_handler(guard, "test-guard")
-    server, port = _serve_with_fake_client(handler, "10.100.0.1")
+    server, port = _serve_with_fake_client(guard, "10.100.0.1")
     try:
-        status = _post_patch(handler, port)
+        status = _post_patch(guard, port)
         assert status != 403, "the Master must not be rejected as off-overlay"
         assert status == 503, "expected the later no_master_key refusal"
     finally:
-        server.shutdown()
-        server.server_close()
+        server.stop()
 
 
 # --- timeouts, serialisation, persistence, and 500 / 403 hygiene -----------------
@@ -769,13 +762,12 @@ def _master_public(vault: Path):
 
 def test_slow_client_is_dropped_then_a_fresh_connection_is_served(authorized_vault: Path) -> None:
     """F4: an idle trickle connection must not hold a listener thread open."""
+    http = guardmod._load_http_module()
+    handler = type("TrickleHandler", (http._RouteHandler,), {"timeout": 0.4})
     guard = guardmod.Guard(authorized_vault, dry_run=True)
-    handler = guardmod._make_handler(guard, "trickle-guard")
-    handler.timeout = 0.4  # this class is created fresh per call; nothing to restore
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    listener = guardmod.build_listener(guard, "trickle-guard", bind="127.0.0.1", port=0, handler_class=handler)
+    listener.start()
+    port = listener.servers[0].server_address[1]
     try:
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         sock.sendall(b"POST /api/v1/critical-file/patch HTTP/1.1")  # no CRLF: read blocks
@@ -786,9 +778,7 @@ def test_slow_client_is_dropped_then_a_fresh_connection_is_served(authorized_vau
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/status", timeout=5) as response:
             assert response.status == 200, "the guard must still answer on a fresh connection"
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        listener.stop()
 
 
 def test_concurrent_patches_are_serialized(authorized_vault: Path, master_key, monkeypatch) -> None:

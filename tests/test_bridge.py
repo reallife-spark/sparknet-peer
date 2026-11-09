@@ -28,9 +28,7 @@ import base64
 import http.client
 import json
 import shutil
-import threading
 from datetime import datetime, timezone
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
@@ -150,22 +148,19 @@ class Server:
         self.bridge = bridge_mod.Bridge(
             ctx["vault"], registry=ctx["vault"] / "manifests" / "node-authorizations.json", clock=lambda: NOW
         )
-        self.server = ThreadingHTTPServer(
-            ("127.0.0.1", 0),
-            bridge_mod._make_handler(self.bridge, bridge_mod.STATES, bridge_mod._make_router(bridge_mod.STATES)),
+        self.listener = bridge_mod.build_listener(
+            self.bridge,
+            bridge_mod.STATES,
+            bind="127.0.0.1",
+            port=0,
+            public_keys={"test": object()},
+            clock=lambda: NOW,
         )
-        self.server.router = bridge_mod._make_router(bridge_mod.STATES)
-        self.server.public_key = None
-        self.server.clock = lambda: NOW
-        self.server.max_age_seconds = 3600
-        self.server.loopback_only_routes = ()
-        self.port = self.server.server_address[1]
-        self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self._thread.start()
+        self.listener.start()
+        self.port = self.listener.servers[0].server_address[1]
 
     def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
+        self.listener.stop()
 
     def request(self, method: str, path: str, body: object | None = None, token: str | None = None):
         headers = {}
