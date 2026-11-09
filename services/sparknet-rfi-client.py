@@ -18,7 +18,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -27,6 +26,15 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
 
 SERVICE_DIR = Path(__file__).resolve().parent
 ROLE_ROOT = SERVICE_DIR.parent
@@ -39,13 +47,7 @@ DEFAULT_PORT = 8090
 def _load_authz() -> Any:
     if "sparknet_rfi_client_authz" in sys.modules:
         return sys.modules["sparknet_rfi_client_authz"]
-    spec = importlib.util.spec_from_file_location("sparknet_rfi_client_authz", AUTHZ)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {AUTHZ}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_rfi_client_authz", AUTHZ, error=RuntimeError)
 
 
 def state_dir(vault_root: Path) -> Path:

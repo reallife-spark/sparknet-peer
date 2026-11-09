@@ -29,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 AGENT = VAULT_ROOT / "services" / "sparknet-admin-agent.py"
@@ -47,13 +48,8 @@ def _run(argv: list[str], cwd: Path | None = None, env: dict[str, str] | None = 
 
 
 def import_source():
-    import importlib.util
 
-    spec = importlib.util.spec_from_file_location("sparknet_admin_agent", str(AGENT))
-    mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
+    return load_by_path("sparknet_admin_agent", str(AGENT))
 
 
 def test_help_exits_zero_and_does_nothing(tmp_path: Path) -> None:

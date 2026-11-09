@@ -20,10 +20,8 @@ Master present (PLAN Step 3 DoD 3).
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import shutil
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
@@ -31,6 +29,7 @@ from types import ModuleType
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 SHARED_DIR = VAULT_ROOT.parent / "shared"
@@ -42,11 +41,7 @@ def _load(name: str, label: str) -> ModuleType:
     path = SHARED_DIR / f"{name}.py"
     if not path.is_file():
         pytest.skip(f"shared implementation not present at {path}")
-    spec = importlib.util.spec_from_file_location(label, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(label, path)
 
 
 authz = _load("sparknet-authz", "sparknet_authz_grants")

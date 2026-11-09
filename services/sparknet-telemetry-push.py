@@ -56,7 +56,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import shutil
@@ -66,6 +65,15 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
+
 
 SERVICE_DIR = Path(__file__).resolve().parent
 DEFAULT_VAULT_ROOT = SERVICE_DIR.parent
@@ -77,79 +85,33 @@ DEFAULT_KINDS = ("status", "metrics")
 DEFAULT_TIMEOUT = 10
 
 
-def _load_authz() -> Any:
-    """Load the one shared authorization implementation, by path.
-
-    Same candidates and module cache the guard uses, so a peer running from a
-    bundle finds ``<bundle>/shared/sparknet-authz.py`` and a deployment can stage
-    it elsewhere with ``SPARKNET_SHARED_DIR``. Two copies would drift and the
-    Master would verify a different envelope than the peer built.
-    """
-    if "sparknet_telemetry_authz" in sys.modules:
-        return sys.modules["sparknet_telemetry_authz"]
-    candidates = []
+def _shared_dirs() -> list[Path]:
+    dirs = []
     env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
     if env_shared:
-        candidates.append(Path(env_shared) / "sparknet-authz.py")
-    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / "sparknet-authz.py")
-    candidates.append(SERVICE_DIR / "sparknet-authz.py")
-    path = next((c for c in candidates if c.is_file()), None)
-    if path is None:
-        return None
-    spec = importlib.util.spec_from_file_location("sparknet_telemetry_authz", path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+        dirs.append(Path(env_shared))
+    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
+    return dirs
+
+
+def _load_authz() -> Any:
+    """Load the one shared authorization implementation through the one loader."""
+    return load_shared("sparknet-authz.py", "sparknet_telemetry_authz", dirs=_shared_dirs(), missing_ok=True)
 
 
 def _load_idle() -> Any:
-    """Load the shared idle-evidence collector by path; one implementation."""
-    if "sparknet_telemetry_idle" in sys.modules:
-        return sys.modules["sparknet_telemetry_idle"]
-    candidates = []
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        candidates.append(Path(env_shared) / "sparknet-idle.py")
-    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / "sparknet-idle.py")
-    candidates.append(SERVICE_DIR / "sparknet-idle.py")
-    path = next((c for c in candidates if c.is_file()), None)
-    if path is None:
-        return None
-    spec = importlib.util.spec_from_file_location("sparknet_telemetry_idle", path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """Load the shared idle-evidence collector through the one loader."""
+    return load_shared("sparknet-idle.py", "sparknet_telemetry_idle", dirs=_shared_dirs(), missing_ok=True)
 
 
 def _load_share_regime() -> Any:
-    """Load the one trust-state implementation, by path.
-
-    The pusher must not re-implement what ``flagged`` means. It reads the share
-    records the bridge persisted and asks the regime's own summarizer, so a
-    status report and a share request cannot disagree about trust.
-    """
-    if "sparknet_telemetry_share_regime" in sys.modules:
-        return sys.modules["sparknet_telemetry_share_regime"]
-    candidates = [
-        SERVICE_DIR / "sparknet-share-regime.py",
-        DEFAULT_VAULT_ROOT / "services" / "sparknet-share-regime.py",
-    ]
-    path = next((c for c in candidates if c.is_file()), None)
-    if path is None:
-        return None
-    spec = importlib.util.spec_from_file_location("sparknet_telemetry_share_regime", path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """Load the one trust-state implementation through the one loader."""
+    return load_shared(
+        "sparknet-share-regime.py",
+        "sparknet_telemetry_share_regime",
+        dirs=[SERVICE_DIR, DEFAULT_VAULT_ROOT / "services"],
+        missing_ok=True,
+    )
 
 
 def _state_dir(vault_root: Path) -> Path:

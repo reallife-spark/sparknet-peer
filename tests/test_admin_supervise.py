@@ -20,10 +20,8 @@ from __future__ import annotations
 
 import base64
 import http.client
-import importlib.util
 import json
 import shutil
-import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +31,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 SHARED_DIR = VAULT_ROOT.parent / "shared"
@@ -43,11 +42,7 @@ def _load(name: str, label: str):
     path = SHARED_DIR / f"{name}.py"
     if not path.is_file():
         pytest.skip(f"shared implementation not present at {path}")
-    spec = importlib.util.spec_from_file_location(label, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(label, path)
 
 
 authz = _load("sparknet-authz", "sparknet_authz_admin_test")
@@ -56,11 +51,7 @@ prov = _load("sparknet-provenance", "sparknet_provenance_admin_test")
 
 def _load_bridge():
     path = VAULT_ROOT / "services" / "sparknet-dispatch-bridge.py"
-    spec = importlib.util.spec_from_file_location("sparknet_dispatch_bridge_admint", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_dispatch_bridge_admint", path)
 
 
 bridge_mod = _load_bridge()

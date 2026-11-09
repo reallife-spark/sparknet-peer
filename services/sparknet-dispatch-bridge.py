@@ -44,7 +44,6 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -65,6 +64,15 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
 
 STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "DENIED", "ERROR"]
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -204,13 +212,8 @@ def _load_shared(name: str, label: str, required: tuple[str, ...]) -> Any:
             raise FileNotFoundError(f"cannot locate shared/{dep}; this bridge refuses to reimplement it")
     if label in sys.modules:
         return sys.modules[label]
-    spec = importlib.util.spec_from_file_location(label, shared / f"{name}.py")
-    if spec is None or spec.loader is None:
-        raise FileNotFoundError(f"no importable module at {shared / f'{name}.py'}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    path = shared / f"{name}.py"
+    return load_by_path(label, path, error=FileNotFoundError, message=f"no importable module at {path}")
 
 
 def _load_http() -> Any:
@@ -233,13 +236,7 @@ def _load_regime() -> Any:
         )
     if "sparknet_share_regime_bridge" in sys.modules:
         return sys.modules["sparknet_share_regime_bridge"]
-    spec = importlib.util.spec_from_file_location("sparknet_share_regime_bridge", path)
-    if spec is None or spec.loader is None:
-        raise FileNotFoundError(f"no importable module at {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_share_regime_bridge", path, error=FileNotFoundError)
 
 
 def _load_provenance() -> Any:
@@ -263,13 +260,7 @@ def _load_admin_agent() -> Any:
         raise FileNotFoundError(f"admin agent missing at {path}; the bridge refuses to reimplement its WebUI client")
     if "sparknet_admin_agent_bridge" in sys.modules:
         return sys.modules["sparknet_admin_agent_bridge"]
-    spec = importlib.util.spec_from_file_location("sparknet_admin_agent_bridge", path)
-    if spec is None or spec.loader is None:
-        raise FileNotFoundError(f"no importable module at {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_admin_agent_bridge", path, error=FileNotFoundError)
 
 
 def _load_guard_replay() -> Any:
@@ -285,13 +276,7 @@ def _load_guard_replay() -> Any:
         raise FileNotFoundError(f"guard missing at {path}; the bridge refuses to reimplement replay protection")
     if "sparknet_guard_bridge" in sys.modules:
         return sys.modules["sparknet_guard_bridge"]
-    spec = importlib.util.spec_from_file_location("sparknet_guard_bridge", path)
-    if spec is None or spec.loader is None:
-        raise FileNotFoundError(f"no importable module at {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_guard_bridge", path, error=FileNotFoundError)
 
 
 def _load_rfi_client() -> Any:
@@ -299,13 +284,7 @@ def _load_rfi_client() -> Any:
     path = Path(__file__).resolve().parent / "sparknet-rfi-client.py"
     if "sparknet_rfi_client_bridge" in sys.modules:
         return sys.modules["sparknet_rfi_client_bridge"]
-    spec = importlib.util.spec_from_file_location("sparknet_rfi_client_bridge", path)
-    if spec is None or spec.loader is None:
-        raise FileNotFoundError(f"RFI client missing at {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_rfi_client_bridge", path, error=FileNotFoundError)
 
 
 def _state_dir(vault_root: Path) -> Path:

@@ -19,23 +19,19 @@ without a live WebUI:
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = VAULT_ROOT / "scripts" / "sparknet-webui-workspace.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("sparknet_webui_workspace", SCRIPT)
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_by_path("sparknet_webui_workspace", SCRIPT)
 
 
 ws = _load()

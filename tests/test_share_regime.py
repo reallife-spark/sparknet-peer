@@ -18,15 +18,14 @@ Each test names the Step 8 DoD item it proves.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = VAULT_ROOT.parent / "contracts"
@@ -46,11 +45,7 @@ FAST = {
 
 def _load_engine() -> Any:
     path = VAULT_ROOT / "services" / "sparknet-share-regime.py"
-    spec = importlib.util.spec_from_file_location("sparknet_share_regime_t", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_share_regime_t", path)
 
 
 engine = _load_engine()

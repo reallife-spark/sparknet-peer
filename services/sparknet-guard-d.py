@@ -53,6 +53,15 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, NoReturn
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
+
+
 try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -450,38 +459,18 @@ def enforce_immutability(paths: list[str], *, dry_run: bool = False) -> list[str
     return enforced
 
 
-def _load_shared_module(filename: str, modname: str):
-    """Import a shared `filename` (hyphenated, so importlib) from the parent vault.
-
-    It lives once in <fabric>/shared/ because the Master and a peer must agree
-    on the byte-for-byte implementation — two copies could drift and then
-    silently stop validating each other. SPARKNET_SHARED_DIR overrides the
-    location for a deployment that stages contracts and shared code elsewhere.
-
-    The filename contains a hyphen, so it cannot be imported by name; use
-    importlib and register it in sys.modules (needed for @dataclass).
-    """
-    import importlib.util
-
-    candidates = []
+def _shared_dirs() -> list[Path]:
+    dirs = []
     env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
     if env_shared:
-        candidates.append(Path(env_shared) / filename)
-    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / filename)
-    candidates.append(SERVICE_DIR / filename)
+        dirs.append(Path(env_shared))
+    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
+    return dirs
 
-    path = next((c for c in candidates if c.is_file()), None)
-    if path is None:
-        return None
-    if modname in sys.modules:
-        return sys.modules[modname]
-    spec = importlib.util.spec_from_file_location(modname, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+
+def _load_shared_module(filename: str, modname: str):
+    """Load a shared file through the one loader; optional modules return None."""
+    return load_shared(filename, modname, dirs=_shared_dirs(), missing_ok=True)
 
 
 def _load_authz_module():
@@ -535,27 +524,13 @@ def _load_notify_module():
 
 
 def _load_telemetry_pusher():
-    """The peer's 70A pusher, loaded by path from this role's services dir.
+    """The peer's 70A pusher, loaded through the one loader from this role's services dir.
 
     ``inbox_alert`` rides the same envelope and endpoint as status/metrics, so the
     guard reuses the one pusher instead of building a second report by hand. It is
     optional: a guard without it still installs and still leaves the local spool.
     """
-    import importlib.util
-
-    path = SERVICE_DIR / "sparknet-telemetry-push.py"
-    if not path.is_file():
-        return None
-    modname = "sparknet_telemetry_pusher"
-    if modname in sys.modules:
-        return sys.modules[modname]
-    spec = importlib.util.spec_from_file_location(modname, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_shared("sparknet-telemetry-push.py", "sparknet_telemetry_pusher", dirs=[SERVICE_DIR], missing_ok=True)
 
 
 def _load_http_module():

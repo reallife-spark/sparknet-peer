@@ -10,7 +10,6 @@ apply path itself is a target-node checklist item in docs/wireguard.md.
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import os
 import socket
@@ -26,6 +25,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 GUARD = VAULT_ROOT / "services" / "sparknet-guard-d.py"
@@ -33,11 +33,7 @@ PROTECTED_TARGET = "/etc/wireguard/wg1.conf"
 
 
 def _load_guard_module():
-    spec = importlib.util.spec_from_file_location("sparknet_guard_d", GUARD)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_guard_d", GUARD)
 
 
 guardmod = _load_guard_module()

@@ -33,12 +33,9 @@ PY="${PY:-$SPARKNET_FABRIC_ROOT/.venv/bin/python}"
 tmp=$(mktemp)
 cat > "$tmp.py" <<PYEOF
 import sys, json
-sys.path.insert(0, '${SPARKNET_FABRIC_ROOT}')
-import importlib.util
-spec = importlib.util.spec_from_file_location('authz', '${SPARKNET_FABRIC_ROOT}/shared/sparknet-authz.py')
-authz = importlib.util.module_from_spec(spec)
-sys.modules['authz'] = authz
-spec.loader.exec_module(authz)
+sys.path.insert(0, '${SPARKNET_FABRIC_ROOT}/shared')
+from sparknet_loader import load_shared
+authz = load_shared("sparknet-authz.py", "sparknet_authz", dirs=['${SPARKNET_FABRIC_ROOT}/shared'])
 from pathlib import Path
 from datetime import datetime, timezone
 

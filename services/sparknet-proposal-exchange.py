@@ -24,12 +24,20 @@ authz and merkle implementations) and the sibling
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
 
 DEFAULT_HERE = Path(__file__).resolve().parent
 
@@ -51,13 +59,7 @@ def _load_by_path(name: str, path: Path) -> Any:
         return sys.modules[name]
     if not path.is_file():
         raise ExchangeError(f"cannot find {path}")
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:  # pragma: no cover - defensive
-        raise ExchangeError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(name, path, error=ExchangeError)
 
 
 def _shared_dir() -> Path:

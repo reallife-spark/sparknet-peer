@@ -15,7 +15,6 @@ live cross-node leg over the overlay is `DoD: confirm: user`.
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
 import shutil
 import sys
@@ -23,6 +22,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = VAULT_ROOT.parent
@@ -44,16 +44,7 @@ CONVERSATION = [
 
 
 def _load(name: str, path: Path, *, keep: bool) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if not keep:
-            sys.modules.pop(name, None)
-    return module
+    return load_by_path(name, path)
 
 
 @pytest.fixture(scope="module")

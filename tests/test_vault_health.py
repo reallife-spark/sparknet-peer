@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
-import sys
 from pathlib import Path
+
+from sparknet_loader import load_by_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "sparknet-vault-health.py"
 
 
 def _load() -> object:
-    spec = importlib.util.spec_from_file_location("sparknet_vault_health_test", SCRIPT)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_vault_health_test", SCRIPT)
 
 
 def _fixture(tmp_path: Path) -> Path:

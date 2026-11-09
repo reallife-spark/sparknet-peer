@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -35,6 +34,15 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_VAULT = HERE.parent
@@ -56,13 +64,7 @@ def _load_by_path(name: str, path: Path) -> Any:
         return sys.modules[name]
     if not path.is_file():
         raise ShareServeError(500, "missing-implementation", str(path))
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ShareServeError(500, "missing-implementation", str(path))
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(name, path)
 
 
 def _shared_dir() -> Path:

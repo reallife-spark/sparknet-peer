@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -51,6 +50,9 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
 
 NUMBERED = (
     "00_System",
@@ -90,13 +92,7 @@ def _load_provisioner() -> Any:
     for parent in candidates:
         cand = (parent / "sparknet-vault-provisioner.py").resolve()
         if cand.is_file():
-            spec = importlib.util.spec_from_file_location("_sparknet_provisioner_ws", cand)
-            if spec is None or spec.loader is None:
-                raise Failure(f"cannot import provisioner at {cand}")
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = mod
-            spec.loader.exec_module(mod)
-            return mod
+            return load_by_path("_sparknet_provisioner_ws", cand)
     raise Failure("cannot locate services/sparknet-vault-provisioner.py")
 
 
@@ -797,13 +793,7 @@ def _load_corpus(vault_root: Path) -> Any:
     script = vault_root / "scripts" / "sparknet-rag-corpus.py"
     if not script.is_file():
         raise Failure(f"corpus builder missing: {script}")
-    spec = importlib.util.spec_from_file_location("_sparknet_rag_corpus_ws", script)
-    if spec is None or spec.loader is None:
-        raise Failure(f"cannot import corpus builder: {script}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_by_path("_sparknet_rag_corpus_ws", script)
 
 
 # --- default model -------------------------------------------------------------

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(VAULT_ROOT.parent / "shared"))
 
 
 def _run(

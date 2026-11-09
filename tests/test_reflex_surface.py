@@ -8,15 +8,14 @@ endpoint. In both cases doubt abstains and the route has no authority.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 SHARED_DIR = VAULT_ROOT.parent / "shared"
@@ -27,15 +26,7 @@ PORTS = VAULT_ROOT.parent / "contracts" / "ports.json"
 
 @pytest.fixture(scope="module")
 def bridge() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("sparknet_dispatch_bridge_reflex", BRIDGE_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(spec.name, None)
-    return module
+    return load_by_path("sparknet_dispatch_bridge_reflex", BRIDGE_PATH)
 
 
 class Stub:

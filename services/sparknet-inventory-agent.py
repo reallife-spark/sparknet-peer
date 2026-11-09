@@ -34,6 +34,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
+
 SERVICE_DIR = Path(__file__).resolve().parent
 ROLE_ROOT = SERVICE_DIR.parent
 FABRIC_ROOT = ROLE_ROOT.parent
@@ -84,17 +93,9 @@ def uplift_endpoint() -> str:
 
 
 def _load(name: str, path: Path) -> Any:
-    if name in sys.modules:
-        return sys.modules[name]
     if not path.is_file():
         return None
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(name, path)
 
 
 def shared_dir() -> Path:

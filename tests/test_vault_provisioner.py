@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 PROVISIONER = VAULT_ROOT / "services" / "sparknet-vault-provisioner.py"
@@ -68,13 +69,8 @@ def _materialise(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def import_source():
-    import importlib.util
 
-    spec = importlib.util.spec_from_file_location("sparknet_vault_provisioner", str(PROVISIONER))
-    mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
+    return load_by_path("sparknet_vault_provisioner", str(PROVISIONER))
 
 
 class FakeWebUI:

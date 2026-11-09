@@ -10,7 +10,6 @@ hashing the tree before and after, so "exit 0" alone can never pass.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -20,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = VAULT_ROOT / "scripts"
@@ -271,14 +271,7 @@ def _write_node_key(authz_path: Path, dest: Path) -> None:
     The approval blocks are dual-signed, so an append test needs both halves of
     the key custody — the user half comes from `user-init`, this is the node's.
     """
-    spec = importlib.util.spec_from_file_location("sparknet_authz_for_approvals", authz_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(spec.name, None)
+    module = load_by_path("sparknet_authz_for_approvals", authz_path)
     private_b64, _ = module.generate_keypair()
     dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     dest.write_text(private_b64 + "\n")

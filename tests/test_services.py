@@ -32,6 +32,8 @@ LEDGER = VAULT_ROOT / "blockchain" / "ledger.json"
 #: guard and the authz library cannot be stdlib-only. Anything else is a
 #: regression until someone justifies it.
 ALLOWED_THIRD_PARTY = {"cryptography"}
+#: The one by-path loader is a local fabric module, not a third-party dependency.
+ALLOWED_LOCAL = {"sparknet_loader"}
 
 
 def _stdlib_only(path: Path) -> list[str]:
@@ -44,7 +46,11 @@ def _stdlib_only(path: Path) -> list[str]:
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0 and node.module:
                 found.add(node.module.split(".")[0])
-    return sorted(name for name in found if name not in sys.stdlib_module_names and name not in ALLOWED_THIRD_PARTY)
+    return sorted(
+        name
+        for name in found
+        if name not in sys.stdlib_module_names and name not in ALLOWED_THIRD_PARTY and name not in ALLOWED_LOCAL
+    )
 
 
 def test_services_exist() -> None:

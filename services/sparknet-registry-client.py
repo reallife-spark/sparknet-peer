@@ -25,6 +25,15 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_by_path(name, path, **_kwargs):
+        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
+
 SERVICE_DIR = Path(__file__).resolve().parent
 DEFAULT_VAULT_ROOT = SERVICE_DIR.parent
 # services/ -> peer-node/ -> fabric root. The shared code is the fabric's, never
@@ -35,12 +44,9 @@ DEFAULT_FABRIC_ROOT = DEFAULT_VAULT_ROOT.parent
 def _load_shared(filename: str, modname: str):
     """Load a shared module by path, the way the guard does.
 
-    The `sparknet_loader` module is not imported here: a service imports stdlib
-    plus `cryptography` only (peer-node/tests/test_services.py), and the loader
-    itself is one more file whose absence must not decide whether a node can
-    verify a registry.
+    The module load itself is the one shared loader; this wrapper only owns the
+    service-specific search order (`SPARKNET_FABRIC_ROOT` and the fabric root).
     """
-    import importlib.util
     import os
 
     fabric = Path(os.environ.get("SPARKNET_FABRIC_ROOT", "").strip() or DEFAULT_FABRIC_ROOT)
@@ -51,13 +57,7 @@ def _load_shared(filename: str, modname: str):
         raise SystemExit(f"shared module not found: {filename}")
     if modname in sys.modules:
         return sys.modules[modname]
-    spec = importlib.util.spec_from_file_location(modname, path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[modname] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path(modname, path, error=SystemExit)
 
 
 def _vault_root() -> Path:

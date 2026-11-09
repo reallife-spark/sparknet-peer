@@ -7,7 +7,6 @@ so they prove the scheme rather than a fixture.
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +14,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparknet_loader import load_by_path
 
 VAULT_ROOT = Path(__file__).resolve().parent.parent
 # The authz implementation both roles execute lives once, in the parent's shared/.
@@ -31,16 +31,11 @@ def _load_authz():
     The sys.modules registration is required: @dataclass resolves annotations
     through sys.modules[cls.__module__], which is None without it.
     """
-    import sys
 
     path = SHARED_DIR / "sparknet-authz.py"
     if not path.is_file():
         pytest.skip(f"shared authz implementation not present at {path}")
-    spec = importlib.util.spec_from_file_location("sparknet_authz", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_by_path("sparknet_authz", path)
 
 
 authz = _load_authz()

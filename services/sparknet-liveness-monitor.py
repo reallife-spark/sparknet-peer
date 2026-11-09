@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib.util
 import ipaddress
 import json
 import os
@@ -61,6 +60,15 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+try:
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
+except ImportError:  # a role copy without shared/ can still answer --help
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
+
 
 SERVICE_DIR = Path(__file__).resolve().parent
 DEFAULT_VAULT_ROOT = SERVICE_DIR.parent
@@ -77,31 +85,17 @@ DEFAULT_TIMEOUT = 10
 SERVING_PORTS = frozenset({4200, 4201, 4202, 4203, 4210, 51820, 8088, 8090, 9090})
 
 
-def _load_module(name: str, path: Path) -> Any:
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _shared_candidates(filename: str) -> list[Path]:
-    candidates = []
+def _shared_dirs() -> list[Path]:
+    dirs = []
     env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
     if env_shared:
-        candidates.append(Path(env_shared) / filename)
-    candidates.append(DEFAULT_VAULT_ROOT.parent / "shared" / filename)
-    candidates.append(SERVICE_DIR / filename)
-    return candidates
+        dirs.append(Path(env_shared))
+    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
+    return dirs
 
 
 def _load_shared(filename: str, module_name: str) -> Any:
-    path = next((c for c in _shared_candidates(filename) if c.is_file()), None)
-    return None if path is None else _load_module(module_name, path)
+    return load_shared(filename, module_name, dirs=_shared_dirs(), missing_ok=True)
 
 
 def _load_authz() -> Any:
@@ -113,7 +107,7 @@ def _load_monitor() -> Any:
 
 
 def _load_pusher() -> Any:
-    return _load_module("sparknet_liveness_pusher", SERVICE_DIR / "sparknet-telemetry-push.py")
+    return load_shared("sparknet-telemetry-push.py", "sparknet_liveness_pusher", dirs=[SERVICE_DIR], missing_ok=True)
 
 
 def _read_json(path: Path) -> Any:
