@@ -15,6 +15,7 @@ current: 19
 
 - `[ ]` not started / in progress
 - `[x]` complete — DoD verified
+- `[~]` closed by scope/supersession — explicitly not DoD-verified as a new implementation
 - **DoD** — the check that proves the step is done; `DoD: confirm: user` when a
   human must confirm
 - `current: N` — step being worked; `current: 16` — terminal
@@ -181,28 +182,29 @@ current: 19
 
 ## Step 18 — Peer-side Gemini blueprint surfaces
 
-- [ ] **Step 18** — Add the peer half of the sovereign-cluster blueprint after
-  Step 17: event/agent bus, collaboration client, execution bridge/daemon,
-  self-improvement loop, package CLI, trace tap and hybrid retrieval.
-  - [ ] **18A — Event bus and agents.** Subscribe to signed tasks/events,
-    dispatch to the real domain agents, publish attested results and expose
-    queue/health.
-  - [ ] **18B — Collaboration.** Join cross-department threads with the user's
-    personal agent; enforce vault scope and ABAC; label agent messages and
-    citations.
-  - [ ] **18C — Execution.** Pair the user workstation daemon; signed JSON-RPC;
-    argv allow-list; path roots; user OS cap; consent UI; no `shell=True` and
-    no root socket.
-  - [ ] **18D — Self-improvement and packages.** Firecracker/worktree mutation
-    loop, deterministic benchmarks, Git promotion/rollback; signed package
-    install/enable/remove.
-  - [ ] **18E — Retrieval and model tap.** Hybrid semantic+agentic retrieval
-    with both result sets to the agent; trace tap for consented distillation;
-    student runtime and dual-response option.
-  - **DoD**: peer-side loopback rehearsals for every new channel; no authority
-    on a knowledge channel; `make test-role`, `make contract-test`,
-    `make context-check`, `make bundle-verify ROLE=peer`, `make ci`; live legs
-    `DoD: confirm: user`.
+- [~] **Step 18 — CLOSED BY STEP 89 SUPERSESSION (scope).** The peer half of
+  the sovereign-cluster blueprint was delivered by Step 89C–H; this step is not
+  a second implementation.
+  - [x] **18A — Event bus and agents.** Step 89C: NATS/JetStream, the peer
+    agent bus, signed task/result envelopes and queue/health surfaces.
+  - [x] **18B — Collaboration.** Step 89G: cross-department rooms, personal
+    agent participation, ABAC filtering and audit.
+  - [x] **18C — Execution.** Step 89G: argv-only exec RPC/daemon, path roots,
+    user OS cap, pairing and no `shell=True`.
+  - [x] **18D — Self-improvement and packages.** Step 89H: worktree/Firecracker
+    mutation, deterministic benchmarks, GitFlow promotion/rollback and the
+    signed package CLI.
+  - [~] **18E — Retrieval and model tap.** Graph, hybrid retrieval and the
+    student model surface are live from Step 89D/F. The live vLLM KV connector
+    remains deliberately refused by `scripts/sparknet-kv-export.py --from-vllm`;
+    a simultaneous dual-response stream was not adopted. Those two optional
+    extensions are retired from this step; a future need is new work.
+  - **Status 2026-11-09 — closed by supersession.** Evidence: the Step 89
+    channel matrix (`contracts/step89-matrix.json`), `tests/test_event*.py`,
+    `test_agent_bus.py`, `test_orchestrator.py`, `test_collab.py`,
+    `test_exec*.py`, `test_self_improve.py`, `test_package*.py`,
+    `test_graph.py`, `test_hybrid.py`, `test_pipeline.py`, and the peer bridge
+    Step 89 route tests. No new authority or knowledge channel was added.
 
 ## Step 19 — Understand-Anything + issue surfaces (peer half)
 
