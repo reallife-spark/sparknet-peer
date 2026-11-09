@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import os
 import re
 import stat
@@ -42,6 +41,9 @@ from collections import Counter
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "shared"))
+from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
 
 REVIEWER = "agents/vault-curator"
 MODEL = "deterministic"
@@ -79,14 +81,8 @@ def _provenance() -> ModuleType:
     if _PROVENANCE is not None:
         return _PROVENANCE
     path = _find_shared(Path(__file__).resolve().parent)
-    spec = importlib.util.spec_from_file_location("sparknet_provenance_curator", path)
-    if spec is None or spec.loader is None:
-        raise CuratorError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    _PROVENANCE = module
-    return module
+    _PROVENANCE = load_by_path("sparknet_provenance_curator", path)
+    return _PROVENANCE
 
 
 # --- path and file safety -----------------------------------------------------
