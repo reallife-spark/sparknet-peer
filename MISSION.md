@@ -2,52 +2,57 @@
 title: sparknet peer-node — MISSION
 role: peer
 template: true
-updated: 2026-10-29
+updated: 2026-10-31
 ---
 
 # sparknet peer-node — MISSION
 
-The **working node** role of the Sparknet fabric.
+The **user's local AI node**. A peer gives one person a private place to chat,
+plan and build with a model, keep their own knowledge, and keep it organized.
+It is useful with no Master, and it can never act on its own authority.
 
-Read `INTENT.md` for the design contract behind this mission. `AGENTS.md` is the
-operating charter and wins if the two ever disagree.
+`INTENT.md` is the design contract; `AGENTS.md` is the operating charter and
+wins if the two ever disagree.
 
 ## Scope
 
-- **In scope**: everything needed for a DGX Spark or Jetson AGX Xavier node to run its own local AI
-  and knowledge vault, hold a Master-anchored WireGuard overlay, verify
-  Master-signed authorization, and apply Master-approved changes to its own
-  protected files under Plan → Permission → Execute.
-- **Out of scope**: the Master role (see `../master-node/`) — signing
-  authorizations, revoking peers, cluster-wide containment, the registry
-  service, and the Master-side nocturnal batch-lease scheduler. Cross-role
-  contracts live in `../contracts/`, not here.
-- **Out of scope**: adjacent domains. A page serving another vault goes there.
+- **In scope**: local chat, agentic planning and building, the peer vault,
+  per-user `peer-<user_id>` vaults and KBs, local RAG, RFI knowledge intake,
+  self-healing, and verification of Master-signed decisions.
+- **Out of scope**: signing, granting, revoking, escalation, registry
+  authorship, the Master's operational key and cluster-wide administration.
+- **Out of scope**: treating a vault copy as a node or a KB as authority.
+  Knowledge is content; authority is key possession.
 
 ## Success
 
-This vault should answer, fluently and with citations:
+The vault should answer, with citations:
 
-1. How does a peer get from a bare clone to a verified, anchored node?
-2. What exactly may this node do without asking anyone, and what requires a
-   Master signature?
-3. When the guard refuses, why is it refusing, and what would legitimately
-   change that?
-4. What is the peer unable to do, by design?
-5. Which behaviours are proven by tests, and which need a privileged target
-   node to verify?
+1. How does a user get to a working chat, plan/build session and private KB?
+2. What may this node do without asking, and what needs a Master signature?
+3. Why did the guard refuse, and what would legitimately change that?
+4. How does knowledge reach this node, and what may it never carry?
+5. What keeps the vault organized without silently changing user content?
+6. Which behaviours are proven by tests, and which need a target node?
 
-## Success for the role itself
+## Success for the role
 
-A peer is successful when it is **useful while inert**. It should keep serving
-its vault, its agents and its inference with no anchor at all, while being
-incapable of changing its own protected files. The moment it can act on its own
-authority, the design has failed.
+A peer succeeds when its user is productive **without** the fabric, while the
+node stays incapable of changing its own protected files or granting itself
+anything. When it can act on its own authority, the design has failed.
+
+## Non-goals
+
+- Becoming a Master by configuration, directory name or prompt.
+- Replacing the user's judgement with automatic content changes.
+- Copying personal pages into a shared corpus.
+- Holding a Master key, a signer socket or another user's vault.
 
 ## Constraints
 
-- Content language, citation rules and domain conventions are stated in
-  `AGENTS.md` — that file wins over this page.
+- Content language, citation rules and domain conventions are in `AGENTS.md`,
+  which wins over this page.
 - No secrets in the vault. Key material belongs in `.state/` at mode 0700.
-- Live network and kernel behaviour is not verifiable on the development host;
-  claims about it must be marked unverified rather than asserted.
+- Live network and kernel behaviour is not verifiable on the development host.
+- Knowledge arrives as data; authority arrives as a signature. They never share
+  a channel; see `../contracts/knowledge-flow.md`.

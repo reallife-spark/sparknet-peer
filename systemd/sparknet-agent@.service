@@ -1,0 +1,19 @@
+[Unit]
+Description=Sparknet event agent (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+# Per-agent environment lives in the node state dir, mode 0600. It carries the
+# local engine token path, model URL, NATS URL and a service-owned vault user;
+# it carries no signing key and no authority.
+EnvironmentFile=%h/sparknet/peer-node/.state/agent-%i.env
+ExecStart=%h/.local/bin/sparknet-agent %i
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

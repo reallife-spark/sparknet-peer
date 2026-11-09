@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# WLAN emergency routing guard (minimal viable implementation)
+# WLAN emergency routing guard.
+#
+# The guard is fail-closed when a WLAN interface exists: if nft is missing or
+# the rules cannot be installed, the unit exits non-zero. A host without a WLAN
+# interface has nothing to guard and exits 0. --dry-run never writes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,74 +12,72 @@ source "$SCRIPT_DIR/sparknet-env.sh"
 
 DRY_RUN=0
 CHECK=0
-
-MASTER_ANCHOR="10.100.0.1"
-WLAN_IFACE="wlan0"
+MASTER_ANCHOR="${SPARKNET_MASTER_ANCHOR:-10.100.0.1}"
+WLAN_IFACE="${SPARKNET_WLAN_IFACE:-wlan0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dry-run)
-      DRY_RUN=1
-      shift
-      ;;
-    --check)
-      CHECK=1
-      shift
-      ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --check) CHECK=1; shift ;;
     --help|-h)
       echo "Usage: $0 [--dry-run] [--check]"
-      echo "Enforces WLAN emergency routing policy: restrict wlan0 to Master Anchor only"
+      echo "Restricts ${WLAN_IFACE} to the Master Anchor ${MASTER_ANCHOR}."
+      echo "--check verifies the table exists; it does not apply and does not report a missing WLAN as success."
       exit 0
       ;;
-    *)
-      shift
-      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-log() {
-  local level="$1"
-  shift
-  printf "[%s] [%s] %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$level" "$*"
-}
+log() { printf '[%s] [wlan-guard] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
-log "INFO" "sparknet-wlan-guard starting"
-log "INFO" "Policy: WLAN iface=${WLAN_IFACE} restricted to Master Anchor=${MASTER_ANCHOR}"
-log "INFO" "Primary metric 100 (ethernet), WLAN metric 600 as per design"
-
-# Check for wlan interface
-if ip link show "${WLAN_IFACE}" >/dev/null 2>&1; then
-  log "INFO" "WLAN interface ${WLAN_IFACE} exists"
-else
-  log "INFO" "WLAN interface ${WLAN_IFACE} not present (template mode)"
+if ! ip link show "$WLAN_IFACE" >/dev/null 2>&1; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log "INFO" "$WLAN_IFACE is not present; printing the policy for inspection"
+  else
+    log "INFO" "$WLAN_IFACE is not present; nothing to guard on this host"
+    exit 0
+  fi
 fi
 
-# Generate nftables policy rules
-NFT_RULES=$(cat <<'RULES'
-# WLAN emergency routing policy (template)
-# Restrict wlan0 to Master Anchor only
+if [[ "$CHECK" -eq 1 ]]; then
+  if nft list table inet sparknet_wlan >/dev/null 2>&1; then
+    log "OK" "sparknet_wlan table is installed"
+    exit 0
+  fi
+  log "ERROR" "sparknet_wlan table is not installed"
+  exit 3
+fi
+
+RULES=$(cat <<RULES
 table inet sparknet_wlan {
   chain output_wlan {
-    oifname "wlan0" ip daddr != 10.100.0.1 drop
-    oifname "wlan0" ip6 daddr != <MASTER_IPV6> drop  # template
+    type filter hook output priority 0; policy accept;
+    oifname "$WLAN_IFACE" ip daddr != $MASTER_ANCHOR drop
   }
   chain input_wlan {
-    iifname "wlan0" ip saddr != 10.100.0.1 drop
+    type filter hook input priority 0; policy accept;
+    iifname "$WLAN_IFACE" ip saddr != $MASTER_ANCHOR drop
   }
 }
 RULES
 )
 
-log "INFO" "Generated nftables rules:"
-if [[ "${VERBOSE:-0}" -eq 1 ]] || [[ "${CHECK}" -eq 1 ]] || [[ "${DRY_RUN}" -eq 1 ]]; then
-  echo "${NFT_RULES}"
-fi
-
-if [[ "${DRY_RUN}" -eq 1 ]]; then
-  log "INFO" "DRY-RUN: Would apply WLAN policy"
-  log "INFO" "sparknet-wlan-guard completed (DRY-RUN)"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  log "DRY-RUN" "would install:"
+  printf '%s\n' "$RULES"
   exit 0
 fi
 
-log "INFO" "sparknet-wlan-guard completed (template mode)"
-exit 0
+if ! command -v nft >/dev/null 2>&1; then
+  log "ERROR" "nft(8) is not installed; refusing to report the WLAN as guarded"
+  exit 1
+fi
+
+nft delete table inet sparknet_wlan >/dev/null 2>&1 || true
+printf '%s\n' "$RULES" | nft -f -
+if ! nft list table inet sparknet_wlan >/dev/null 2>&1; then
+  log "ERROR" "nft accepted the input but the table is not present"
+  exit 1
+fi
+log "OK" "$WLAN_IFACE restricted to $MASTER_ANCHOR"

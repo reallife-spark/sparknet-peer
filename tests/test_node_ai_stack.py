@@ -64,9 +64,8 @@ def _compose_services() -> dict[str, dict]:
 
 def test_the_stack_declares_the_nodes_own_chat_surface_only():
     services = _compose_services()
-    assert set(services) == {"open-webui"}, (
-        "the AI stack is the node's own chat surface standing on the node's infra "
-        f"model server and vector store; anything else got {sorted(services)}"
+    assert set(services) == {"open-webui", "nginx"}, (
+        f"the stack is Open WebUI plus the same-origin nginx proxy; anything else got {sorted(services)}"
     )
 
 
@@ -89,9 +88,13 @@ def test_the_only_published_port_is_the_firewalled_webui():
         "container cannot reach a loopback-only host listener"
     )
     assert webui.get("ports") is None, "with network_mode: host the surface binds through PORT, not a ports map"
-    assert webui.get("environment", {}).get("PORT") == "8181", (
-        "the operator decision is a single LAN + overlay port 8181, paired with the SPARKNET-FW host firewall"
-    )
+    assert webui.get("environment", {}).get("HOST") == "127.0.0.1"
+    assert webui.get("environment", {}).get("PORT") == "8180"
+    nginx = _compose_services()["nginx"]
+    assert nginx.get("network_mode") == "host"
+    assert nginx.get("environment", {}).get("SPARKNET_BIND") == "8181"
+    assert any("nginx.conf.template" in str(volume) for volume in nginx.get("volumes", []))
+    assert any("sparknet-menu.js" in str(volume) for volume in nginx.get("volumes", []))
     lookup = _load(MANIFEST)["topology"]
     assert lookup["published_ports"] == ["0.0.0.0:8181 (host netns)"]
     assert "SPARKNET-FW" in json.dumps(lookup) or "firewall" in json.dumps(_load(MANIFEST)["network_boundary"])
@@ -120,47 +123,64 @@ def test_open_webui_uses_this_nodes_own_ollama():
     )
 
 
-def test_open_webui_rag_is_chroma_backed_and_structure_scoped():
+def test_open_webui_rag_is_qdrant_backed_and_structure_scoped():
     webui = _compose_services()["open-webui"]
     env = webui.get("environment", {})
     assert env.get("RAG_INGESTION_ENABLED") == "true", (
-        "the operator enabled Open WebUI RAG (2026-10-10), backed by the node's own ChromaDB"
+        "the operator enabled Open WebUI RAG (2026-10-10), now backed by the node's own Qdrant"
     )
-    assert env.get("VECTOR_DB") == "chroma"
-    assert env.get("CHROMA_HTTP_HOST") == "127.0.0.1"
-    assert env.get("CHROMA_HTTP_PORT") == "18000"
+    assert env.get("VECTOR_DB") == "qdrant"
+    assert env.get("QDRANT_URI") == "http://127.0.0.1:6333"
+    assert "CHROMA_HTTP_HOST" not in env, "the Chroma transport must not survive the migration"
     manifest = _load(MANIFEST)["knowledge_bases"]["open_webui_rag"]
     assert manifest["corpus"].startswith("structure-only"), manifest["corpus"]
     assert "00_System/user.md" in manifest["excluded"], "personal pages must be excluded from the corpus"
 
 
+def test_qdrant_compose_is_loopback_only_and_keyed():
+    qdrant_compose = STACK_DIR / "docker-compose.qdrant.yml"
+    services = yaml.safe_load(qdrant_compose.read_text())["services"]
+    assert set(services) == {"qdrant"}
+    qdrant = services["qdrant"]
+    ports = qdrant.get("ports", [])
+    assert ports == ["127.0.0.1:6333:6333", "127.0.0.1:6334:6334"], (
+        "Qdrant is a node-local store; exposing it on 0.0.0.0 or the overlay "
+        f"would bypass the signed 4223 surface: {ports}"
+    )
+    env = qdrant.get("environment", {})
+    key = env.get("QDRANT__SERVICE__API_KEY", "")
+    assert key.startswith("${SPARKNET_QDRANT_API_KEY:"), key
+    assert "do not commit" in key
+    assert qdrant.get("volumes"), "the index must survive a container recreation"
+
+
 # --- Step 5: the node's agents as the Open WebUI surface ----------------------
 
 
-def test_open_webui_declares_the_node_agent_surface():
+def test_open_webui_declares_the_opencode_engine_surface():
     webui = _compose_services()["open-webui"]
     env = webui.get("environment", {})
-    assert env.get("OPENAI_API_BASE_URLS") == "http://127.0.0.1:4096/v1", (
-        "the Step 5 surface is the node's own dispatch bridge (loopback 4096); "
-        "any other base URL routes the node's agents through something foreign"
+    assert env.get("OPENAI_API_BASE_URLS") == "http://127.0.0.1:4204/v1", (
+        "the agent execution surface is the loopback OpenCode engine; the old "
+        "dispatch bridge is the authority/vault surface, not a fake assistant"
     )
     assert env.get("MODEL_FILTER_ENABLED") == "true"
-    assert env.get("MODEL_FILTER_LIST") == "plan,build,vault,node-orchestrator,masterspike"
-    assert env.get("DEFAULT_MODELS") == "llama3.2:latest", (
-        "the default chat model is a local Ollama model present on every node, "
-        "so chat keeps answering even if the bridge grant lapses; the node's "
-        "agents stay selectable through the filter"
+    filter_list = env.get("MODEL_FILTER_LIST", "").split(",")
+    assert {"sparknet-chat", "sparknet-plan", "sparknet-build"} <= set(filter_list)
+    assert any("masterspike" in item for item in filter_list)
+    assert env.get("DEFAULT_MODELS") == "sparknet-chat", (
+        "the default is the vault-aware engine chat; a local Ollama model stays selectable as a fallback"
     )
     assert webui.get("network_mode") == "host", (
-        "host networking is what lets the webui reach the node's own bridge on "
-        "loopback; a bridge-network container cannot reach 127.0.0.1:4096"
+        "host networking is what lets the webui reach the loopback engine; a "
+        "bridge-network container cannot reach 127.0.0.1:4204"
     )
 
 
-def test_the_bridge_key_is_a_deploy_time_variable_never_a_committed_token():
+def test_the_engine_key_is_a_deploy_time_variable_never_a_committed_token():
     webui = _compose_services()["open-webui"]
     key = webui.get("environment", {}).get("OPENAI_API_KEYS", "")
-    assert key.startswith("${SPARKNET_WEBUI_BRIDGE_GRANT:"), key
+    assert key.startswith("${SPARKNET_OPENCODE_ENGINE_TOKEN:"), key
     assert "do not commit" in key
     assert "sk-" not in key, "a standing bearer token must never be committed"
 
@@ -214,8 +234,10 @@ def test_the_declared_models_match_the_webui_model_filter():
     manifest = json.loads((ROLE_ROOT / "manifests" / "agent-models.json").read_text())
     webui = _compose_services()["open-webui"]
     filter_list = webui.get("environment", {}).get("MODEL_FILTER_LIST", "").split(",")
-    ids = [m["id"] for m in manifest["selectable"]]
-    assert filter_list == ids, "the model filter and agent-models.json must name the same surface"
+    local_ids = [m["id"] for m in manifest.get("local_models", [])]
+    assert {"sparknet-chat", "sparknet-plan", "sparknet-build", "llama3.2:latest"} <= set(filter_list)
+    assert any("masterspike" in item for item in filter_list)
+    assert set(local_ids) <= set(filter_list), "the local student candidates stay selectable"
 
 
 # --- the boundary the stack must not cross ------------------------------------
@@ -266,14 +288,16 @@ def test_compose_config_parses_when_docker_is_available(tmp_path):
     if shutil.which("docker") is None:
         pytest.skip("docker not on PATH; the file-reading assertions above still apply")
     env = dict(__import__("os").environ)
-    env["SPARKNET_WEBUI_BRIDGE_GRANT"] = "placeholder-grant"
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE), "config", "--quiet"],
-        cwd=ROLE_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert result.returncode == 0, f"docker compose rejects the ai-stack file:\n{result.stdout}\n{result.stderr}"
+    env["SPARKNET_OPENCODE_ENGINE_TOKEN"] = "placeholder-engine-token"
+    env["SPARKNET_QDRANT_API_KEY"] = "placeholder-qdrant-key"
+    for compose in (COMPOSE, STACK_DIR / "docker-compose.qdrant.yml"):
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose), "config", "--quiet"],
+            cwd=ROLE_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, f"docker compose rejects {compose.name}:\n{result.stdout}\n{result.stderr}"

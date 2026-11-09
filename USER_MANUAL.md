@@ -100,14 +100,15 @@ checkout and is broken here, because this published repository does not contain
 ## 3. Orientation
 
 Read [AGENTS.md](AGENTS.md) first: it is the role's charter and states the
-layout, the memory and plan protocols, and the boundaries. This manual
-explains the code.
+layout, the memory and plan protocols, and the boundaries. `CONTEXT.md` is the
+generated operating context; `contracts/knowledge-flow.md` is the channel map;
+`docs/self-healing.md` is the safe-repair loop. This manual explains the code.
 
 | Path | What it is |
 |---|---|
-| `services/` | The ten peer services. Each is a single-file, `#!/usr/bin/env python3` program with a `--help`. |
+| `services/` | The peer services, including the RFI request client. Each is a single-file, `#!/usr/bin/env python3` program with a `--help`. |
 | `scripts/` | The 23 operational scripts: identity, keys, overlay, firewall, lockdown, sync, provisioning, the run helper. |
-| `systemd/` | Twelve services and two timers. A unit contains **no vault path** — it calls a generated shim. |
+| `systemd/` | Twelve services and four timers. A unit contains **no vault path** — it calls a generated shim. |
 | `manifests/` | The node's declared identity, capabilities, protected paths, policies and templates. |
 | `configs/` | Templates: `wireguard/`, `network/`, `nftables/`, `container/`, `ai-stack/`. |
 | `00_System/` … `07_Archives/` | The vault, in the numbered PARA layout. |
@@ -147,7 +148,7 @@ every legacy name is still a symlink, and `tests/test_shims.py` enforces it.
 
 ## 4. The services
 
-Ten services. Each is a standalone program with a `--help`, and each is
+Eleven services. Each is a standalone program with a `--help`, and each is
 wired into a unit.
 
 ### `sparknet-guard-d.py` — the guard daemon
@@ -231,6 +232,15 @@ lower than the installed one. A replayed *older* publication is refused as
 installing the exact publication already installed (equal sequence and digest)
 answers `REGISTRY_ALREADY_INSTALLED` and writes nothing, so the Master's timed
 re-delivery is a no-op rather than an error.
+
+### `sparknet-rfi-client.py` — the knowledge request client
+
+Asks the Master for missing fabric knowledge with an explicit scope. It builds
+the contract's overlay-attributed request, posts it to the Master's `8090`
+intake, and records the request-id under `.state/rfi-requests/` at 0600. The
+bridge exposes it as `POST /vault/rfi` so a session can ask without leaving the
+grant path. It never reads the local vault and never grants anything. An empty
+answer is a legitimate answer; the peer keeps serving its own knowledge.
 
 ### `sparknet-vault-provisioner.py` — the vault provisioner
 
@@ -317,7 +327,7 @@ commit rather than by a reviewer.
 
 ## 6. The units
 
-Twelve services and two timers in `systemd/`:
+Twelve services and four timers in `systemd/`:
 
 | Unit | Purpose |
 |---|---|

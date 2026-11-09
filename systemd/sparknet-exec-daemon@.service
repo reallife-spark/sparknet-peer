@@ -1,0 +1,20 @@
+[Unit]
+Description=Sparknet argv-only execution daemon (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+# User unit: the operator's own OS identity is the execution cap. It has no
+# signing key, no network listener and no shell. The unit is staged without
+# --allow-exec; an operator adds a drop-in only after confirming the policy.
+ExecStart=%h/.local/bin/sparknet-exec-daemon --socket %t/sparknet-exec/exec.sock --vault-root %h/sparknet/peer-node --node-pub %h/sparknet/peer-node/.state/keys/ed25519-node.pub.b64 --signing-key %h/sparknet/peer-node/.state/keys/ed25519-node.key.b64 --policy %h/sparknet/peer-node/configs/exec-policy.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+RuntimeDirectory=sparknet-exec
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=default.target

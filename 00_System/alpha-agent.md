@@ -121,3 +121,16 @@ There is no `approvals.md` and nothing may be coded to one.
   `$OPENCODE_DATA_DIR`.
 - Never claim live verification of WireGuard, iptables, `chattr +i`,
   KillSwitch or systemd behaviour: this host has none of them.
+
+## 7. Self-healing and knowledge requests
+
+- `make vault-health` diagnoses the vault; `make vault-heal` repairs only the
+  skeleton, shims, `CONTEXT.md` and the health report. Never force a signature,
+  rewrite the ledger, move a user page, edit the registry or write a protected
+  file to make a finding disappear.
+- When the local vault and the user's KB cannot answer a fabric question, ask
+  the Master with `make rfi-request QUESTION=... SCOPE=...`. The request carries
+  an explicit scope and no authority. The answer arrives in `01_Inbox/`, is
+  sanitized if untrusted, and becomes knowledge only after acceptance.
+- `contracts/knowledge-flow.md` is the channel map. Registry entries,
+  approvals, telemetry and admin responses are never knowledge.

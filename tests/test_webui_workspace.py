@@ -263,3 +263,23 @@ def test_upload_and_embed_runs_process_even_with_a_background_embed(tmp_path: Pa
     assert ("multipart", "/api/v1/files/", ["file", "process"]) in calls
     assert ("POST", "/api/v1/retrieval/process/file", {"file_id": "f-1"}) in calls
     assert any(method == "GET" for method, *_ in calls) is False
+
+
+def test_functions_import_posts_the_memory_filter(tmp_path: Path, monkeypatch) -> None:
+    filter_file = tmp_path / "filter.py"
+    filter_file.write_text("class Filter: pass\n")
+    calls: list[tuple] = []
+
+    def fake_http(base, path, method, token, body=None, timeout=60):
+        calls.append((base, path, method, token, body))
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(ws, "_http_json", fake_http)
+    assert ws.cmd_functions_import("http://127.0.0.1:8181", "token", filter_file) == 0
+    _base, path, method, token, body = calls[-1]
+    assert path == "/api/v1/functions/create"
+    assert method == "POST"
+    assert token == "token"
+    assert body["id"] == "sparknet-memory"
+    assert body["type"] == "filter"
+    assert "class Filter" in body["content"]

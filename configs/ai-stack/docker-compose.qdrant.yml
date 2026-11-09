@@ -1,0 +1,34 @@
+# The node's Qdrant vector store, joined beside docker-compose.yml.
+#
+# Open WebUI and the node's local vector CLI share this one store. It binds
+# loopback only: the fabric-facing surface remains the Master's signed 4223
+# listener, and a peer must never expose Qdrant on the LAN or overlay.
+#
+# The API key is deploy-time. Generate it under the node state dir at 0600 and
+# pass it through the environment; compose fails loudly while it is unset.
+# Persistent storage is a named volume so a container recreation does not lose
+# the index. Snapshots are written under /qdrant/snapshots and pushed by the
+# uplift agent; they are not a reason to expose the HTTP port.
+name: sparknet-node-vector
+
+services:
+  qdrant:
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.20.0}
+    container_name: sparknet-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: "${SPARKNET_QDRANT_API_KEY:?set at deploy time; do not commit}"
+      QDRANT__SERVICE__ENABLE_TLS: "false"
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__LOG_LEVEL: "INFO"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  qdrant-data:
+    name: sparknet-qdrant-data

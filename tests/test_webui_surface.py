@@ -347,6 +347,58 @@ def test_permissions_survive_a_bridge_restart(ctx):
 # --- DoD 4/5: the committed, versioned surface ---------------------------------
 
 
+def test_vault_rfi_tool_asks_within_the_grant_scope(server, ctx, monkeypatch):
+    calls: dict[str, object] = {}
+
+    class FakeClient:
+        @staticmethod
+        def master_endpoint(vault_root):
+            return "http://10.100.0.1:8090/api/v1/rfi-request"
+
+        @staticmethod
+        def request_knowledge(vault_root, **kwargs):
+            calls.update(kwargs)
+            return {"ok": True, "status": 202, "request": {"request_id": "RFI-1"}, "record": "x"}
+
+    monkeypatch.setattr(tb.bridge_mod, "_load_rfi_client", lambda: FakeClient)
+    grant = _grant(ctx)
+    status, payload = server.request(
+        "POST",
+        "/vault/rfi",
+        {"question": "What is the registry?", "scope": ["05_Knowledge"]},
+        token=_bearer(grant),
+    )
+    assert status == 200, payload
+    assert payload["request_id"] == "RFI-1"
+    assert calls["scope"] == ["05_Knowledge"]
+
+
+def test_vault_rfi_tool_does_not_read_local_data_outside_the_grant(server, ctx, monkeypatch):
+    calls: dict[str, object] = {}
+
+    class FakeClient:
+        @staticmethod
+        def master_endpoint(vault_root):
+            return "http://10.100.0.1:8090/api/v1/rfi-request"
+
+        @staticmethod
+        def request_knowledge(vault_root, **kwargs):
+            calls.update(kwargs)
+            return {"ok": True, "status": 202, "request": {"request_id": "RFI-2"}, "record": "x"}
+
+    monkeypatch.setattr(tb.bridge_mod, "_load_rfi_client", lambda: FakeClient)
+    grant = _grant(ctx)
+    status, payload = server.request(
+        "POST",
+        "/vault/rfi",
+        {"question": "Read account state", "scope": ["00_System"]},
+        token=_bearer(grant),
+    )
+    assert status == 200, payload
+    assert calls["scope"] == ["00_System"]
+    assert not (ctx["vault"] / "00_System" / "user.md").read_text().startswith("RFI-2")
+
+
 def test_permission_endpoints_never_touch_the_vault(server, ctx):
     status, payload, grant = _start_chat(server, ctx)
     grant_id = grant["grant_id"]

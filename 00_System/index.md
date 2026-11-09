@@ -41,8 +41,9 @@ Links on this page are wikilinks so they resolve whether the page is opened as
 
 - Why this role exists: [[MISSION]]
 - The design contract and first-deployment expectations: [[INTENT]]
+- The operating context loaded by every AI surface: [[CONTEXT]]
+- Vault diagnosis and safe repair: `docs/self-healing.md`
 - Session memory: `MEMORY.md`, then `02_Daily/<today>.md`
-- Work in flight: `PLAN.md` — terminal (`current: done`); new peer work gets
-  a **new** step
+- Work in flight: `PLAN.md` — its `current:` names the step
 - The rules: [[alpha-agent]]
 - The contract (single source of truth): `contracts/tracking-schema.json`

@@ -1,0 +1,27 @@
+[Unit]
+Description=Sparknet OpenCode engine and per-user sandbox supervisor (%i)
+Documentation=file:///usr/local/libexec/sparknet/sparknet-opencode-engine
+After=docker.service network-online.target
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+# The engine chowns per-user sandbox state to the unprivileged sandbox UID and
+# launches fixed containers; it holds no key and mounts no role state.
+User=root
+# The role env file is written by sparknet-node-setup / the deploy step. It
+# carries no signing key and no master credential: a model token, a sandbox
+# state path, a pinned runtime image and the local model upstream.
+EnvironmentFile=/etc/sparknet/opencode-engine-%i.env
+ExecStart=/usr/local/libexec/sparknet/sparknet-opencode-engine --role %i
+Restart=on-failure
+RestartSec=10
+# A turn may be blocked on a model; restart the supervisor promptly rather
+# than waiting for the full default stop timeout.
+TimeoutStopSec=15
+KillMode=mixed
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

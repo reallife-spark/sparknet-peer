@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 try:  # Python 3.9+
     from collections.abc import Callable
@@ -217,6 +218,7 @@ class _Message:
         additions: list[str],
         conflicts: list[str],
         identical: list[str],
+        by: str,
     ) -> dict:
         return {
             "msg_type": "share.reconcile",
@@ -225,6 +227,7 @@ class _Message:
             "additions": additions,
             "conflicts": conflicts,
             "identical": identical,
+            "by": by,
         }
 
     @staticmethod
@@ -537,6 +540,8 @@ class Regime:
     # -- receiving side ---------------------------------------------------------
 
     def _mirror_offer(self, message: dict) -> list[dict]:
+        if not re.fullmatch(r"share-[A-Za-z0-9][A-Za-z0-9._-]{0,127}", str(message.get("share_id") or "")):
+            raise ShareError(400, "bad-share-id", "share_id is not a safe identifier")
         kind = message.get("kind")
         if kind not in self.share_types:
             raise ShareError(400, "unknown-kind", f"{kind} is not a share type in capabilities.json")
@@ -684,10 +689,11 @@ class Regime:
             share,
             {"event": "reconcile-received", "additions": len(additions), "conflicts": len(conflicts), **summary},
         )
-        return _Message.reconcile(share_id, "receive", additions, conflicts, identical)
+        return _Message.reconcile(share_id, "receive", additions, conflicts, identical, self.node_id)
 
     def _recv_reconcile(self, message: dict) -> list[dict]:
         share = self._get(message["share_id"])
+        self._require_party(share, message)
         summary = {
             "additions": message.get("additions", []),
             "conflicts": message.get("conflicts", []),
@@ -713,6 +719,7 @@ class Regime:
 
     def _recv_close(self, message: dict) -> list[dict]:
         share = self._get(message["share_id"])
+        self._require_party(share, message)
         if share["state"] != "closed":
             self._transition(share, "closed", message["at"], message.get("reason") or "peer-closed")
             self._action("teardown-stanza", share, reason=message.get("reason") or "peer-closed")
@@ -841,9 +848,16 @@ class Regime:
             raise ShareError(400, "unknown-message", f"no handler for {mtype!r}")
         return handler(message)
 
+    @staticmethod
+    def _require_party(share: dict, message: dict) -> None:
+        by = message.get("by")
+        if by not in {share.get("offered_by"), share.get("toward")}:
+            raise ShareError(403, "not-party", "the message sender is not a party to this share")
+
     def _recv_use(self, message: dict) -> list[dict]:
         share_id = message["share_id"]
         share = self._get(share_id)
+        self._require_party(share, message)
         if share["state"] != "open":
             raise ShareError(409, "not-open", f"share {share_id} is {share['state']}")
         share["last_use"] = message.get("at") or self._iso()

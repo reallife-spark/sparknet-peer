@@ -44,7 +44,12 @@ command -v chattr >/dev/null 2>&1 || die "chattr(1) not found (e2fsprogs) — ca
 
 IFACE="${SPARKNET_WG_INTERFACE-}"
 [[ -n "$IFACE" ]] || die "SPARKNET_WG_INTERFACE is not set — refusing to guess the overlay interface (the deployment env file must name it, e.g. wg1)"
-CONF="${SPARKNET_WG_RENDER_DIR:-$SPARKNET_STATE_DIR/wireguard}/$IFACE.conf"
+[[ "$IFACE" =~ ^[A-Za-z0-9_]{1,15}$ ]] || die "invalid SPARKNET_WG_INTERFACE: $IFACE"
+RENDER_DIR="${SPARKNET_WG_RENDER_DIR:-$SPARKNET_STATE_DIR/wireguard}"
+[[ "$RENDER_DIR" = /* && "$RENDER_DIR" != *..* ]] || die "invalid SPARKNET_WG_RENDER_DIR: $RENDER_DIR"
+RENDER_DIR="$(realpath -m "$RENDER_DIR")"
+[[ "$RENDER_DIR" != "/" ]] || die "refusing a root render directory"
+CONF="$RENDER_DIR/$IFACE.conf"
 ETC_CONF="/etc/wireguard/$IFACE.conf"
 
 # If anything below fails after the unlock, re-pin whatever exists before we

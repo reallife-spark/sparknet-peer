@@ -39,9 +39,9 @@ ALLOWED_TRACKED_IN_COPY = {
     "06_Projects",
     "07_Archives",
     "AGENTS.md",
+    "CONTEXT.md",
     "MISSION.md",
     "INTENT.md",
-    "audit",
     "docs",
 }
 
@@ -209,8 +209,7 @@ def test_vault_pages_skip_symlink_shims_and_state(tmp_path: Path) -> None:
     pages = {str(p.relative_to(dest)) for p in mod._vault_pages(dest)}
     assert "dup.md" not in pages, "a symlinked shim must not be embedded twice"
     assert "index.md" not in pages, "the top-level index.md shim must be skipped"
-    assert "00_System/index.md" in pages
-    assert "00_System/user.md" in pages
+    assert "00_System/user.md" not in pages, "the operator user record must never enter a user vault"
     assert all(".state" not in Path(p).parts for p in pages)
 
 

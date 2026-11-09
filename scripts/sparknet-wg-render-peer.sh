@@ -24,16 +24,5 @@ done
 [ -n "$REG" ] || { echo "--registry required" >&2; exit 1; }
 [ -f "$REG" ] || { echo "registry not found: $REG" >&2; exit 1; }
 
-PY="${PY:-python3}"
-tmp=$(mktemp)
-cat > "$tmp.py" <<PYEOF
-import sys, json
-sys.path.insert(0, '${FABRIC_ROOT}')
-from pathlib import Path
-reg = json.loads(Path('${REG}').read_text())
-lines = []
-lines.append('# peer rendered')
-open('${OUT}','w').write('\n'.join(lines))
-PYEOF
-"$PY" "$tmp.py" 2>/dev/null || true
-rm -f "$tmp.py"
+echo "sparknet-wg-render-peer: registry-derived renderer for $OUT is not implemented; use sparknet-wireguard-render.sh with the node's WG environment" >&2
+exit 2

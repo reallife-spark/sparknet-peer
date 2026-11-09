@@ -154,11 +154,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        verb = "verified" if args.dry_run else "installed"
-        print(
-            f"{verb} publication sequence {result['sequence']} "
-            f"({result['entries']} entries, sha256 {result['registry_sha256'][:16]}...)"
-        )
+        if result.get("status") == "REGISTRY_ALREADY_INSTALLED":
+            print(f"already installed: sequence {result['sequence']} (nothing written)")
+        else:
+            verb = "verified" if args.dry_run else "installed"
+            print(
+                f"{verb} publication sequence {result['sequence']} "
+                f"({result['entries']} entries, sha256 {result['registry_sha256'][:16]}...)"
+            )
     return 0
 
 

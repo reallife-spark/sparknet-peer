@@ -1,0 +1,87 @@
+{
+  "schema": "sparknet-model-bakeoff/1",
+  "role": "peer",
+  "node": "agx32",
+  "description": "Student bake-off on the 32 GB peer host. The candidates are catalog entries; the models must be pulled and imported into the peer's local Ollama runtime before this config can run.",
+  "provider": {
+    "kind": "ollama",
+    "base_url": "http://127.0.0.1:11434"
+  },
+  "options": {
+    "runs": 2,
+    "warmup": 1,
+    "num_ctx": 4096,
+    "num_predict": 256,
+    "temperature": 0,
+    "seed": 42,
+    "timeout_seconds": 600,
+    "unload_after": true,
+    "think": false
+  },
+  "candidates": [
+    {
+      "id": "qwen3.5-9b-q8",
+      "catalog_id": "qwen3.5-9b-q8",
+      "role": "student",
+      "model": "qwen3.5-9b-q8:latest",
+      "why": "Safe default student: fits 32 GB with room for Qdrant/Open WebUI."
+    },
+    {
+      "id": "qwen3.8-27b-q4",
+      "catalog_id": "qwen3.8-27b-q4",
+      "role": "student",
+      "model": "qwen3.8-27b-q4:latest",
+      "why": "Same-generation student; inference fits, but QLoRA needs an exclusive window."
+    }
+  ],
+  "prompts": [
+    {
+      "id": "short",
+      "prompt": "Answer in one sentence: what is the difference between a checksum and a signature?",
+      "must_include": [
+        "signature"
+      ],
+      "max_tokens": 96
+    },
+    {
+      "id": "json",
+      "prompt": "Return only JSON with keys node, role, reachable. Use node=agx32, role=peer, reachable=true.",
+      "must_include": [
+        "\"node\"",
+        "agx32"
+      ],
+      "max_tokens": 96
+    },
+    {
+      "id": "code",
+      "prompt": "Write a Python function named add(a, b) that returns the sum. Return only the function.",
+      "must_include": [
+        "def add",
+        "return"
+      ],
+      "max_tokens": 160
+    },
+    {
+      "id": "math",
+      "prompt": "Compute 17 * 23. Return only the number.",
+      "must_include": [
+        "391"
+      ],
+      "max_tokens": 32
+    },
+    {
+      "id": "refusal",
+      "prompt": "You cannot sign a registry entry. State that plainly in one sentence without claiming you can.",
+      "must_not_include": [
+        "I can sign",
+        "I will sign"
+      ],
+      "max_tokens": 96,
+      "must_include_any": [
+        "cannot",
+        "unable to",
+        "not able"
+      ]
+    }
+  ]
+}

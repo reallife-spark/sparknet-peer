@@ -181,6 +181,7 @@ def ctx(tmp_path: Path, master_key: Ed25519PrivateKey, monkeypatch: pytest.Monke
     pub_manifest = vault / "manifests" / "keys" / "master-ed25519.pub.b64"
     pub_manifest.parent.mkdir(parents=True, exist_ok=True)
     pub_manifest.write_text(base64.b64encode(raw).decode("ascii") + "\n")
+    pub_manifest.chmod(0o600)
 
     identity = json.loads((vault / "manifests" / "node-identity.json").read_text())
     registry = {
@@ -621,3 +622,71 @@ def test_overlay_source_is_refused_on_local_routes_but_serves_admin(ctx):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+# --- memory-supervise: signed, on-demand, never a mirror ---------------------
+
+
+class _MemoryGateway(BaseHTTPRequestHandler):
+    calls: list[dict[str, Any]] = []
+
+    def log_message(self, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:  # noqa: N802
+        self.calls.append(
+            {
+                "path": self.path,
+                "token": self.headers.get("X-Sparknet-Local-Token"),
+                "vault": self.headers.get("X-Sparknet-Vault-Path"),
+                "user": self.headers.get("X-Sparknet-User"),
+            }
+        )
+        payload = json.dumps({"ok": True, "records": 3, "by_type": {"episodic": 3}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_memory_actions_need_memory_supervise(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry", "admin-supervise"])
+    body = _admin_request(master_key, action="memory_status", **_target(ctx))
+    status, payload = server.post("/admin/memory_status", body)
+    assert status == 403
+    assert payload["reason"] == "capability_missing"
+
+
+def test_memory_status_forwards_to_the_local_gateway(server, ctx, master_key, grant_registry, monkeypatch):
+    grant_registry(["telemetry", "admin-supervise", "memory-supervise"])
+    token = bridge_mod._state_dir(ctx["vault"]) / "memory.local.token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text("local-memory-token-1234567890\n")
+    gateway = ThreadingHTTPServer(("127.0.0.1", 0), _MemoryGateway)
+    thread = threading.Thread(target=gateway.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("SPARKNET_MEMORY_GATEWAY_URL", f"http://127.0.0.1:{gateway.server_port}")
+        _MemoryGateway.calls.clear()
+        body = _admin_request(master_key, action="memory_status", user_id=None, **_target(ctx))
+        status, payload = server.post("/admin/memory_status", body)
+        assert status == 200, payload
+        assert payload["records"] == 3
+        call = _MemoryGateway.calls[-1]
+        assert call["token"] == "local-memory-token-1234567890"
+        assert call["vault"] is None, "the gateway defaults to the role vault; no host path is sent"
+        assert "vault_path=" not in call["path"]
+    finally:
+        gateway.shutdown()
+        gateway.server_close()
+
+
+def test_memory_action_without_a_local_token_is_refused(server, ctx, master_key, grant_registry):
+    grant_registry(["telemetry", "admin-supervise", "memory-supervise"])
+    token = bridge_mod._state_dir(ctx["vault"]) / "memory.local.token"
+    token.unlink(missing_ok=True)
+    body = _admin_request(master_key, action="memory_status", **_target(ctx))
+    status, payload = server.post("/admin/memory_status", body)
+    assert status == 503
+    assert payload["reason"] == "memory-token-missing"

@@ -27,7 +27,7 @@ FROM python:3.12-slim-bookworm
 
 # Pinned, never 'latest': a mutating tag is exactly the reproducibility
 # guarantee a node image exists for.
-ARG OPENCODE_VERSION=1.18.35
+ARG OPENCODE_VERSION=2.2.5
 # Set by buildkit per --platform; maps to the release asset suffix.
 ARG TARGETARCH
 

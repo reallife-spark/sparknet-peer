@@ -1,57 +1,90 @@
 {
   "schema_version": "1.0",
   "contract": "node-ai-stack",
-  "description": "A node's own AI stack, as committed config: its own chat surface (Open WebUI) standing on its own model server (infra Ollama) and its own vector store (ChromaDB), the declarative slice of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md. Read by peer-node/tests/test_node_ai_stack.py, which fails the build if the committed topology stops being the declared surface the design requires. Cluster fan-out is NOT here: accepting a signed subtask belongs to the task ingress + cluster client (item 5), so nothing in this file can be a vector for delegated inference.",
+  "description": "A node's own AI stack, as committed config: its own chat surface (Open WebUI) standing on its own model server (infra Ollama) and its own vector store (Qdrant), the declarative slice of adoption item 3 in CLUSTER_INFERENCE_DESIGN.md. Read by peer-node/tests/test_node_ai_stack.py, which fails the build if the committed topology stops being the declared surface the design requires. Cluster fan-out is NOT here: accepting a signed subtask belongs to the task ingress + cluster client (item 5), so nothing in this file can be a vector for delegated inference.",
   "authored": "2026-10-10",
   "source": "CLUSTER_INFERENCE_DESIGN.md §Docker packaging",
-  "status": "declared, not deployed",
-
+  "status": "live on agx64 2026-11-05; target after fabric Step 88 is agx32 (peer role inversion): Open WebUI v0.13.0, OpenCode engine 2.2.5 sandbox (live 2026-11-06), Qdrant v1.20.0",
   "topology": {
-    "services": ["open-webui"],
+    "services": [
+      "open-webui",
+      "nginx"
+    ],
     "compose_file": "peer-node/configs/ai-stack/docker-compose.yml",
-    "bind_host": "0.0.0.0 (host network namespace; PORT=8181)",
-    "published_ports": ["0.0.0.0:8181 (host netns)"],
-    "network_mode": "host — the surface must reach the node's loopback-only dispatch bridge (127.0.0.1:4096); a bridge-network container cannot reach a loopback-only host listener (host-gateway resolves to the docker0 gateway, not 127.0.0.1)",
+    "bind_host": "0.0.0.0:8181 (nginx host netns); Open WebUI is loopback 127.0.0.1:8180",
+    "published_ports": [
+      "0.0.0.0:8181 (host netns)"
+    ],
+    "network_mode": "host — Open WebUI reaches the loopback OpenCode engine (127.0.0.1:4204), Ollama (127.0.0.1:11434) and the memory gateway (127.0.0.1:4093). Open WebUI binds 127.0.0.1:8180; nginx owns the published 8181 surface and the same-origin /sparknet-console/ path.",
     "model_server": "the node's infra Ollama, http://127.0.0.1:11434 (never a remote node's overlay address)",
-    "vector_store": "the node's infra ChromaDB, http://127.0.0.1:18000 (its published port)",
-    "why_published": "Operator decision (2026-10-10), network choice revised 2026-10-11: the chat surface answers on the node's LAN and overlay addresses. Binding is not the confidentiality control any more — the SPARKNET-FW host firewall restricts 8181/11434/18000 to loopback + LAN + overlay + Docker bridge subnets, so the exposure is a decision with a rule attached, not an omission."
+    "vector_store": "the node's own Qdrant server, http://127.0.0.1:6333 (loopback only; declared in docker-compose.qdrant.yml)",
+    "why_published": "Operator decision (2026-10-10), network choice revised 2026-10-11: the chat surface answers on the node's LAN and overlay addresses. Binding is not the confidentiality control any more — the SPARKNET-FW host firewall restricts 8181/11434 to loopback + LAN + overlay + Docker bridge subnets, while Qdrant stays loopback-only on 6333/6334, so the exposure is a decision with a rule attached, not an omission.",
+    "exposed_internal": [
+      "127.0.0.1:8180 (Open WebUI, loopback)",
+      "127.0.0.1:8099 (console, loopback)"
+    ]
   },
-
   "gpu": {
     "declared_in_committed_file": false,
     "why": "GPU is never required to run, only to change throughput. The committed file declares none; the host deployer adds a device reservation on a node that has one. Docker cannot partition VRAM, so GPU sharing is configured inside the model server, never by slicing containers."
   },
-
   "knowledge_bases": {
     "vault": "the only authored knowledge base; readable only through the grant-checked bridge",
     "open_webui_rag": {
       "RAG_INGESTION_ENABLED": "true",
-      "VECTOR_DB": "chroma",
+      "VECTOR_DB": "qdrant",
       "corpus": "structure-only — schema, taxonomy, charters and contracts; never the vault's personal pages",
-      "excluded": ["00_System/user.md", "**/user-env-manifest.json", "**/secrets-index.json", "02_Daily/**", "03_Sources/**", "_staging/**", "_archives/**", ".state/**", "manifests/keys/**", "*.ed25519", ".env"],
+      "excluded": [
+        "00_System/user.md",
+        "**/user-env-manifest.json",
+        "**/secrets-index.json",
+        "02_Daily/**",
+        "03_Sources/**",
+        "_staging/**",
+        "_archives/**",
+        ".state/**",
+        "manifests/keys/**",
+        "*.ed25519",
+        ".env"
+      ],
       "builder": "scripts/sparknet-rag-corpus.py",
-      "why": "The operator wants the node's chat surface to know the shape of the fabric without ingesting personal material. The corpus is built from a fixed allow-list and a test asserts no excluded path reaches it, so the vector store never becomes an uncontrolled copy of the vault."
+      "why": "The operator wants the node's chat surface to know the shape of the fabric without ingesting personal material. The corpus is built from a fixed allow-list and a test asserts no excluded path reaches it, so the vector store never becomes an uncontrolled copy of the vault.",
+      "embedding": "sentence-transformers/all-MiniLM-L6-v2 (CPU). Qwen3-embedding and nomic were evaluated on 2026-11-05; both measured ~20 s per request on agx64 with the text model resident, so the existing MiniLM index was kept and no reindex was forced."
     }
   },
-
   "capabilities": {
     "granted_to_this_stack": [],
-    "explicitly_not_granted": ["sign", "cluster-dispatch", "cluster-serve"],
+    "explicitly_not_granted": [
+      "sign",
+      "cluster-dispatch",
+      "cluster-serve"
+    ],
     "why": "A node's own prompts are already free and need no capability (COMPUTE_CAPABILITY_DESIGN.md draws the same line: only delegated work is gated). 'cluster-serve' is what a *delegated subtask* would need, and no subtask can reach this stack until item 5; 'sign' belongs to the Master alone and is structurally unobtainable here — the stack mounts no key, no signer socket and no $SPARKNET_STATE_DIR."
   },
-
   "webui_surface": {
     "contract": "peer-node/manifests/agent-models.json (schema sparknet-agent-models/1)",
-    "selectable_models": ["plan", "build", "vault", "node-orchestrator", "masterspike"],
+    "selectable_models": [
+      "sparknet-chat",
+      "sparknet-plan",
+      "sparknet-build",
+      "qwen3.5-9b-q8:latest",
+      "qwen3.8-27b-q4:latest",
+      "llama3.2:latest",
+      "sparknet-masterspike:latest"
+    ],
     "declared_not_database_state": "Open WebUI's panel is a database click; the surface lives in agent-models.json + this compose env so a redeploy cannot lose it (peer PLAN Step 5 DoD 5).",
-    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=plan,build,vault,node-orchestrator,masterspike, DEFAULT_MODELS=llama3.2:latest (local Ollama so chat answers if the bridge grant lapses)",
-    "bridge_route": "OPENAI_API_BASE_URLS=http://127.0.0.1:4096/v1 — this node's dispatch bridge, loopback 4096, reached because Open WebUI shares the host network namespace (network_mode: host).",
-    "bridge_key": "OPENAI_API_KEYS expands a deploy-time signed grant ($SPARKNET_WEBUI_BRIDGE_GRANT); no token is committed and the compose fails loudly while it is unset.",
-    "approve_deny": "a permission request surfaces as an Approve/Deny card and resolves through POST /session/:id/permissions/:permissionID on the dispatch bridge (peer PLAN Step 5 DoD 2); the decision is recorded in the grant-keyed session.",
-    "session_vault_access": "POST /session/:id/vault-access toggles per-session 'all vault tools' (mode: all|per-tool). 'all' drops only the presenting grant's own spent nonce so the grant keeps working in that session until it expires; scope, expiry, signature and per-mutation audit are unchanged. Default stays one-shot.",
-    "rag": "enabled, structure-only corpus, backed by the node's own ChromaDB (peer PLAN Step 5 DoD 4, operator decision 2026-10-10)."
+    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=sparknet-chat,sparknet-plan,sparknet-build,qwen3.5-9b-q8:latest,qwen3.8-27b-q4:latest,llama3.2:latest,sparknet-masterspike:latest, DEFAULT_MODELS=sparknet-chat (the engine chat is the default; local models stay selectable as fallback)",
+    "rag": "enabled, structure-only corpus, backed by the node's own Qdrant server (peer PLAN Step 5 DoD 4, vector-store decision 2026-11-01).",
+    "proxy": "nginx:1.27-alpine host network; injects /sparknet-menu.js and proxies /sparknet-console/ to the read-only console on 127.0.0.1:8099",
+    "engine_route": "OPENAI_API_BASE_URLS=http://127.0.0.1:4204/v1 — the loopback Sparknet OpenCode engine. Open WebUI forwards X-Sparknet-User, X-Sparknet-User-Role, X-Sparknet-Chat-Id and X-Sparknet-Model-Id as custom headers.",
+    "engine_key": "OPENAI_API_KEYS expands a deploy-time engine token ($SPARKNET_OPENCODE_ENGINE_TOKEN); the token is generated at 0600 under the node state dir and is never committed.",
+    "per_user_sandbox": "The engine starts one OpenCode 2.2.5 container per user from sparknet-opencode-runtime. The container mounts only /srv/sparknet/knowledge/peer-<user_id>; it has an internal Docker network whose only peer is the host model proxy, a read-only root filesystem, dropped capabilities and no key/state/ledger mount.",
+    "per_user_models": "Every approved user gets a private workspace model (peer-<user_id>) based on sparknet-chat, with their personal KB and the shared structure KB attached.",
+    "prompts": "16 bilingual prompt templates (EN + DE) installed as public-read slash commands.",
+    "tools": "Four native user-scoped tools: sparknet_vault (list/search/read/capture), sparknet_memory, sparknet_rfi and sparknet_status. They call the loopback memory gateway with the WebUI service token and the signed-in user id.",
+    "functions": "sparknet_memory filter (global) and sparknet_capture action (global).",
+    "bridge_tools": "The dispatch bridge remains the grant-checked vault/authority tool surface; it is no longer used as a fake chat model. The static bridge grant tool-server registration was removed."
   },
-
   "admin_federation": {
     "design": "ADMIN_FEDERATION_DESIGN.md (fabric root, fabric PLAN Step 29 phase 1)",
     "signup": "ENABLE_SIGNUP=true with DEFAULT_USER_ROLE=pending — a new account lands pending and reaches nothing until the Master (via this node's admin agent) accepts it; self-registration is allowed because approval is the gate",
@@ -60,7 +93,6 @@
     "audit": "AUDIT_LOG_LEVEL=METADATA in the compose — node-local metadata audit trail alongside the event spool",
     "supervise": "admin-supervise is adopted into the local vocabulary + bridge /admin/* route (fabric Step 29 phase 2), executed only for requests the Master signed and this node's own registry granted; the route stays inert (capability_missing) otherwise and reaches the node's own WebUI only over loopback with the node's own service-account token"
   },
-
   "conversation_passing": {
     "contract": "the /session/:id native verbs on the dispatch bridge (peer PLAN Step 6)",
     "message": "POST /session/:id/message accepts an 'agent' and hands the conversation off with history intact (Step 6 DoD 1)",
@@ -69,7 +101,6 @@
     "native_primitives": "only native opencode/OpenAI verbs; no custom passing mechanism (Step 6 note)",
     "regime_not_here": "clocks, expiry, cross-node transfer and the kb-*/full share kinds belong to Step 8 and are deliberately absent"
   },
-
   "masterspike": {
     "contract": "peer-node/manifests/masterspike.json",
     "source": ".opencode/skills/llm-wiki/SKILL.md",
@@ -78,7 +109,6 @@
     "selectable": "masterspike is in agent-models.json and MODEL_FILTER_LIST (DoD 4)",
     "capability_boundary": "the model holds no signing capability — the artifacts are text with no key, no signer socket and no state dir, and authority stays Ed25519 in the Master, never a prompt (DoD 4)"
   },
-
   "signing_boundary": {
     "reached_from_here": false,
     "key_material": "none mounted",
@@ -86,13 +116,33 @@
     "state_dir": "none mounted",
     "why_structural": "A deny rule governs a process that may later ignore it. This stack is declared without the mounts a key or a socket would need, which makes the boundary structural rather than a permission statement."
   },
-
   "network_boundary": {
     "host_firewall": "SPARKNET-FW (iptables DOCKER-USER + INPUT, ip6tables INPUT) on each node",
-    "allowed_sources": ["loopback", "192.168.178.0/24 (LAN)", "10.100.0.0/24 (wg1 overlay)", "172.16.0.0/12 (docker bridges)", "link-local"],
-    "exposed_ports": ["8181 (webui)", "11434 (ollama)", "18000 (chroma)"],
-    "why": "Publishing on 0.0.0.0 also publishes on the node's global IPv6. The firewall keeps the fabric fully functional (overlay, LAN, loopback, docker nets, wg1) while blocking direct public-internet reach to those ports."
+    "allowed_sources": [
+      "loopback",
+      "192.168.178.0/24 (LAN)",
+      "10.100.0.0/24 (wg1 overlay)",
+      "172.16.0.0/12 (docker bridges)",
+      "link-local"
+    ],
+    "exposed_ports": [
+      "8181 (webui)",
+      "11434 (ollama)"
+    ],
+    "why": "Publishing on 0.0.0.0 also publishes on the node's global IPv6. The firewall keeps the fabric fully functional (overlay, LAN, loopback, docker nets, wg1) while blocking direct public-internet reach to those ports.",
+    "loopback_only_ports": [
+      "6333 (qdrant http)",
+      "6334 (qdrant grpc)"
+    ]
   },
-
-  "not_built_yet": "This describes the deployed shape; the assertion of a *live* Open WebUI, a running bridge grant and a working firewall is a target-node check. The assertions in test_node_ai_stack.py are read off these files and the compose file, and are therefore only as strong as the files: they prove the declared topology is coherent, not that a real deployment held. The admin agent is declared here and its code lives in services/sparknet-admin-agent.py; its live signup→pending→approve cycle is a fabric Step 29 `DoD: confirm: user`."
+  "not_built_yet": "This describes the deployed shape; the assertion of a *live* Open WebUI, a running bridge grant and a working firewall is a target-node check. The assertions in test_node_ai_stack.py are read off these files and the compose file, and are therefore only as strong as the files: they prove the declared topology is coherent, not that a real deployment held. The admin agent is declared here and its code lives in services/sparknet-admin-agent.py; its live signup→pending→approve cycle is a fabric Step 29 `DoD: confirm: user`.",
+  "opencode_engine": {
+    "port": 4204,
+    "bind": "127.0.0.1",
+    "unit": "peer-node/systemd/sparknet-opencode-engine@.service",
+    "runtime_image": "sparknet-opencode-runtime:2.2.5",
+    "model_proxy": "host model proxy per sandbox network gateway; only /v1/ model paths are allowed",
+    "authority": "none — no key, no signer socket, no ledger/registry mount; each sandbox sees only its user vault",
+    "master": "the Master admin surface uses the same engine with --single-vault /srv/sparknet/knowledge/master-admin; the master role vault is never mounted"
+  }
 }

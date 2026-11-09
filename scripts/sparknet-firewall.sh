@@ -9,7 +9,10 @@
 # What it protects (the "exposed" set in manifests/ai-stack.json):
 #   8181  — Open WebUI   (host netns, so INPUT)
 #   11434 — Ollama       (host netns, so INPUT)
-#   18000 — ChromaDB     (docker-published, so FORWARD/DOCKER-USER)
+#
+# Qdrant is NOT here. It binds 127.0.0.1:6333/6334 and is never published on
+# the LAN or overlay; the fabric-facing vector surface remains the Master's
+# signed 4223 listener. A loopback-only bind needs no host firewall rule.
 #
 # Allowed sources (manifests/ai-stack.json network_boundary.allowed_sources):
 #   loopback, the LAN (192.168.178.0/24), the wg1 overlay (10.100.0.0/24),
@@ -32,7 +35,7 @@ CHAIN_FWD="SPARKNET-FW-FWD"
 # The protected TCP ports. Kept in sync with manifests/ai-stack.json by
 # tests/test_firewall.py — a port published without a rule is the failure mode
 # this whole file exists to prevent.
-PROTECTED_TCP=(8181 11434 18000)
+PROTECTED_TCP=(8181 11434)
 
 ALLOWED_V4=(
   "127.0.0.0/8"      # loopback
@@ -60,7 +63,10 @@ need_root() {
 ensure_chain() {
   local family="$1" table="$2" chain="$3"
   "${family}" -t "${table}" -N "${chain}" 2>/dev/null || true
-  "${family}" -t "${table}" -F "${chain}"
+  # DOCKER-USER belongs to Docker and the operator; never flush it.
+  if [[ "${chain}" != "DOCKER-USER" ]]; then
+    "${family}" -t "${table}" -F "${chain}"
+  fi
 }
 
 rebuild_chain() {
@@ -102,10 +108,10 @@ install_rules() {
   rebuild_chain iptables "${CHAIN_IN}" "${ALLOWED_V4[@]}"
   jump_for_ports iptables INPUT "${CHAIN_IN}" "${PROTECTED_TCP[@]}"
 
-  # FORWARD/DOCKER-USER: the docker-published vector store (18000). Docker
-  # creates DOCKER-USER; create it here too so a first run before docker still
-  # leaves a coherent chain, and re-apply after docker restarts (the unit is
-  # ordered After=docker.service).
+  # FORWARD/DOCKER-USER is kept for the host's docker-published surfaces. The
+  # chain has to exist even when the current protected set is host-netns-only,
+  # because a later published port is a one-line change and the jump must be
+  # re-applied after docker restarts (the unit is ordered After=docker.service).
   ensure_chain iptables filter DOCKER-USER
   # A default RETURN so anything we did not match keeps traversing FORWARD.
   if ! iptables -C DOCKER-USER -j RETURN 2>/dev/null; then
@@ -197,7 +203,7 @@ case "${1:-}" in
     echo "Usage: $0 {install|status|verify|flush}"
     echo
     echo "SPARKNET-FW — the node's host firewall. Keeps the published AI-stack"
-    echo "ports (8181, 11434, 18000) off the public internet while leaving the"
+    echo "ports (8181, 11434) off the public internet while leaving the"
     echo "rest of the host's traffic alone."
     echo "  install   build + apply the SPARKNET-FW-IN and SPARKNET-FW-FWD chains (root)"
     echo "  status    show the chains and where they are jumped from (root)"

@@ -2,69 +2,168 @@
   "openapi": "3.0.3",
   "info": {
     "title": "sparknet vault tools",
-    "version": "1.2.0",
-    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools (the spec itself is served by the bridge at GET /v1/openapi.json). Every operation requires Authorization: Bearer <base64url of a signed session grant>. The bridge is loopback-only; Open WebUI runs on the host network namespace, so 127.0.0.1:4096 reaches it directly. A tool refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py — the bridge never builds its own ledger shape."
+    "version": "1.3.0",
+    "description": "The peer dispatch bridge's grant-checked /vault/* tools, for Open WebUI to execute as HTTP tools (the spec itself is served by the bridge at GET /v1/openapi.json). Every operation requires Authorization: Bearer <base64url of a signed session grant>. The bridge is loopback-only; Open WebUI runs on the host network namespace, so 127.0.0.1:4096 reaches it directly. A tool refuses anything outside the presenting grant's vault_scope. Mutations (capture/promote/patch) append a dual-signed grant_use block through shared/sparknet-provenance.py \u2014 the bridge never builds its own ledger shape."
   },
   "servers": [
-    { "url": "http://127.0.0.1:4096", "description": "the node's local dispatch bridge (loopback 4096, host netns shared with the Open WebUI container)" }
+    {
+      "url": "http://127.0.0.1:4096",
+      "description": "the node's local dispatch bridge (loopback 4096, host netns shared with the Open WebUI container)"
+    }
   ],
-  "security": [{ "BearerAuth": [] }],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
   "components": {
     "securitySchemes": {
-      "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "base64url(grant JSON)" }
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "base64url(grant JSON)"
+      }
     },
     "schemas": {
       "ok": {
         "type": "object",
         "properties": {
-          "ok": { "type": "boolean" },
-          "note": { "type": "string" },
-          "decision": { "type": "string", "enum": ["granted", "quarantined"] },
-          "grant_use_id": { "type": "string" },
-          "paths": { "type": "array", "items": { "type": "string" } }
+          "ok": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "granted",
+              "quarantined"
+            ]
+          },
+          "grant_use_id": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       },
       "capture": {
         "type": "object",
-        "required": ["target", "body"],
+        "required": [
+          "target",
+          "body"
+        ],
         "properties": {
-          "target": { "type": "string", "description": "vault-relative note path inside grant vault_scope" },
-          "body": { "type": "string", "description": "markdown note body" },
-          "session": { "type": "string" },
-          "agent": { "type": "string" },
-          "model": { "type": "string" }
+          "target": {
+            "type": "string",
+            "description": "vault-relative note path inside grant vault_scope"
+          },
+          "body": {
+            "type": "string",
+            "description": "markdown note body"
+          },
+          "session": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
         }
       },
       "promote": {
         "type": "object",
-        "required": ["source", "target"],
+        "required": [
+          "source",
+          "target"
+        ],
         "properties": {
-          "source": { "type": "string" },
-          "target": { "type": "string" },
-          "session": { "type": "string" }
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          }
         }
       },
       "patch": {
         "type": "object",
-        "required": ["target", "patch"],
+        "required": [
+          "target",
+          "patch"
+        ],
         "properties": {
-          "target": { "type": "string" },
+          "target": {
+            "type": "string"
+          },
           "patch": {
             "type": "object",
-            "required": ["old", "new"],
+            "required": [
+              "old",
+              "new"
+            ],
             "properties": {
-              "old": { "type": "string", "description": "text that must appear exactly once in the note body" },
-              "new": { "type": "string" }
+              "old": {
+                "type": "string",
+                "description": "text that must appear exactly once in the note body"
+              },
+              "new": {
+                "type": "string"
+              }
             }
           },
-          "session": { "type": "string" }
+          "session": {
+            "type": "string"
+          }
         }
       },
       "vaultAccess": {
         "type": "object",
-        "required": ["mode"],
+        "required": [
+          "mode"
+        ],
         "properties": {
-          "mode": { "type": "string", "enum": ["all", "per-tool"], "description": "'all' lets every vault tool work repeatedly in this session (only this grant's own spent nonce is discounted, until it expires); 'per-tool' restores the one-shot default" }
+          "mode": {
+            "type": "string",
+            "enum": [
+              "all",
+              "per-tool"
+            ],
+            "description": "'all' lets every vault tool work repeatedly in this session (only this grant's own spent nonce is discounted, until it expires); 'per-tool' restores the one-shot default"
+          }
+        }
+      },
+      "rfiRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "fabric fact the local vault/KB cannot answer"
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "vault categories the Master may draw on; must stay inside the grant vault_scope"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "seconds to wait for the Master intake"
+          }
         }
       }
     }
@@ -75,7 +174,16 @@
         "operationId": "listModels",
         "summary": "List the node's agents as OpenAI-compatible models",
         "responses": {
-          "200": { "description": "the declared models", "content": { "application/json": { "schema": { "type": "object" } } } }
+          "200": {
+            "description": "the declared models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -85,10 +193,25 @@
         "summary": "Ask the reflex sensor for a typed decision; abstains on doubt and never grants authority",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "a decision (accept/reject/abstain); advisory only", "content": { "application/json": { "schema": { "type": "object" } } } }
+          "200": {
+            "description": "a decision (accept/reject/abstain); advisory only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -97,11 +220,37 @@
         "operationId": "vault_list",
         "summary": "List vault notes inside the grant's vault_scope",
         "parameters": [
-          { "name": "prefix", "in": "query", "schema": { "type": "string" }, "description": "vault-relative prefix" },
-          { "name": "recursive", "in": "query", "schema": { "type": "string", "enum": ["0", "1"] } }
+          {
+            "name": "prefix",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "vault-relative prefix"
+          },
+          {
+            "name": "recursive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "scoped note paths", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ok" } } } }
+          "200": {
+            "description": "scoped note paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ok"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -110,10 +259,26 @@
         "operationId": "vault_cat",
         "summary": "Read one vault note inside the grant's vault_scope",
         "parameters": [
-          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "the note content", "content": { "application/json": { "schema": { "type": "object" } } } }
+          "200": {
+            "description": "the note content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -123,10 +288,25 @@
         "summary": "Write a new note under the grant; out-of-scope targets are quarantined under _raw/, and a grant_use block is appended either way",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/capture" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/capture"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "the note and its ledger block", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ok" } } } }
+          "200": {
+            "description": "the note and its ledger block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ok"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -136,10 +316,25 @@
         "summary": "Move a note the grant created (or a pending raw/staged draft) to its final place; appends a grant_use block",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/promote" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/promote"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "the final note and its ledger block", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ok" } } } }
+          "200": {
+            "description": "the final note and its ledger block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ok"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -149,10 +344,25 @@
         "summary": "Patch one note body (old -> new, exactly once), re-sign it, and append a grant_use block",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/patch" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/patch"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "the patched note and its ledger block", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ok" } } } }
+          "200": {
+            "description": "the patched note and its ledger block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ok"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -161,14 +371,64 @@
         "operationId": "session_vault_access",
         "summary": "Toggle per-session 'all vault tools' (mode: all|per-tool). 'all' discounts only this grant's own spent nonce so the session's vault tools keep working until the grant expires; scope, expiry, signature and per-mutation audit are unchanged.",
         "parameters": [
-          { "name": "session_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/vaultAccess" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/vaultAccess"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "the session's new vault_access mode", "content": { "application/json": { "schema": { "type": "object" } } } }
+          "200": {
+            "description": "the session's new vault_access mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/rfi": {
+      "post": {
+        "operationId": "vault_rfi",
+        "summary": "Ask the Master for missing fabric knowledge within the grant scope",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/rfiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "request queued at the Master intake",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ok"
+                }
+              }
+            }
+          }
         }
       }
     }

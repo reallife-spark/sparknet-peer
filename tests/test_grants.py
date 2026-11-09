@@ -260,7 +260,7 @@ def test_malformed_grant_refused(ctx):
 
 
 def test_wrong_presenter_refused(ctx):
-    other = dict(ctx["identity"], node_id="sparknet-node-0002")
+    other = dict(ctx["identity"], node_id="sparknet-node-0003")
     assert _verify(ctx, _grant(ctx), node_identity=other).reason == authz.REASON_GRANT_NODE_MISMATCH
 
 
@@ -279,7 +279,7 @@ def test_order_nonce_precedes_presenter(ctx):
     decision = _verify(
         ctx,
         _grant(ctx, nonce="presenter-test"),
-        node_identity=dict(ctx["identity"], node_id="sparknet-node-0002"),
+        node_identity=dict(ctx["identity"], node_id="sparknet-node-0003"),
         consumed_nonces={"presenter-test"},
     )
     assert decision.reason == authz.REASON_GRANT_NONCE_REUSED

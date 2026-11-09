@@ -1,0 +1,55 @@
+{
+  "schema": "sparknet-console/1",
+  "role": "peer",
+  "node": "agx64",
+  "title": "Sparknet Node",
+  "menus": [
+    "mesh",
+    "vectors",
+    "learning",
+    "memory",
+    "projects"
+  ],
+  "bind": "127.0.0.1",
+  "port": 8099,
+  "token_file": ".state/webui/console.token",
+  "qdrant": {
+    "uri": "http://127.0.0.1:6333",
+    "api_key_file": ".state/qdrant.api.key",
+    "allowed_collections": [
+      "sparknet-peer",
+      "open-webui_*"
+    ],
+    "excluded_prefixes": [
+      "uplift-",
+      "sparknet-inventory",
+      "sparknet-traces",
+      "sparknet-kv"
+    ],
+    "map_collections": [
+      "sparknet-peer",
+      "open-webui_knowledge",
+      "open-webui_files"
+    ]
+  },
+  "paths": {
+    "identity": "manifests/node-identity.json",
+    "registry": "manifests/node-authorizations.json",
+    "ledger": "blockchain/ledger.json",
+    "share_regime": "manifests/share-regime.json",
+    "telemetry": "/mnt/log/sparknet-telemetry.jsonl",
+    "admin_events": ".state/admin-events/events.jsonl",
+    "rfi_dir": ".state/rfi-requests"
+  },
+  "distill": null,
+  "openwebui_url": "http://127.0.0.1:8181",
+  "learning": {
+    "master_file_share_url": "http://10.100.0.1:4221",
+    "status_path": "/v1/file/learning/status.json"
+  },
+  "memory": {
+    "gateway_url": "http://127.0.0.1:4093",
+    "local_token_file": ".state/memory.local.token",
+    "vault_path": "."
+  }
+}

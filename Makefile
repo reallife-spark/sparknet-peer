@@ -23,9 +23,10 @@ PY := $(if $(wildcard $(VENV_PY)),$(VENV_PY),$(if $(wildcard $(FABRIC_VENV_PY)),
 .PHONY: help env-init validate test lint devtools provision dist bundle install-units \
         install-config keys wg-render authz-verify anchor guard-status guard-contract \
         peer-manifest containment wiki-preflight wiki-status wiki-lint wiki-capture skills-sync skills-check clean \
-        provenance-verify user-init provenance-append ingest accept-inbox review-inbox precommit shims-check keys-check \
+        provenance-verify user-init provenance-append ingest accept-inbox review-inbox precommit shims-check keys-check context-pack context-check governance-check exec-policy-check exec-daemon \
         ai-stack-config admin-agent-help container-build container-load container-config container-preflight container-up \
-        container-health container-down model-generate model-verify model-build model-serve
+        container-health container-down model-generate model-verify model-build model-serve rfi-request vault-health vault-heal \
+        opencode-runtime opencode-runtime-clean opencode-certify
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -33,6 +34,15 @@ help: ## Show this help
 
 env-init: ## Write this role's .env + wiki dirs from .env.example (idempotent)
 	@$(FABRIC_ROOT)/scripts/sparknet-env-init.sh "$(VAULT_ROOT)"
+
+context-pack: ## Regenerate this role's CONTEXT.md
+	@$(PY) $(FABRIC_ROOT)/scripts/sparknet-context-pack.py --root "$(VAULT_ROOT)" --role peer
+
+governance-check: ## Enforce the five-file shape and budgets
+	@$(PY) $(FABRIC_ROOT)/scripts/sparknet-governance-check.py
+
+context-check: ## Fail if this role's CONTEXT.md is stale
+	@$(PY) $(FABRIC_ROOT)/scripts/sparknet-context-pack.py --root "$(VAULT_ROOT)" --role peer --check
 
 validate: ## Env contract + manifest checks
 	@./scripts/sparknet-validate.sh
@@ -91,6 +101,12 @@ dist: ## Build a standalone peer bundle into ../dist
 		$(FABRIC_ROOT)/scripts/sparknet-bundle.sh --verify \
 			$$(ls -t "$(FABRIC_ROOT)"/dist/sparknet-peer-*.tar.gz | head -1); \
 	fi
+
+exec-policy-check: ## Validate the execution allowlist (no execution)
+	@$(PY) -c "import json; from pathlib import Path; d=json.loads(Path('$(VAULT_ROOT)/configs/exec-policy.json').read_text()); assert d['schema']=='sparknet-exec-policy/1'; print('exec policy: valid')"
+
+exec-daemon: ## Run the argv-only daemon in validate-only mode (foreground)
+	@$(PY) "$(FABRIC_ROOT)/scripts/sparknet-exec-daemon.py" --socket "$${SPARKNET_EXEC_SOCKET:-/tmp/sparknet-exec.sock}" --vault-root "$(VAULT_ROOT)" --node-pub "$(VAULT_ROOT)/.state/keys/ed25519-node.pub.b64" --signing-key "$(VAULT_ROOT)/.state/keys/ed25519-node.key.b64" --policy "$(VAULT_ROOT)/configs/exec-policy.json"
 
 install-units: ## Generate shims + install systemd units (dry-run; pass APPLY=1 to write)
 	@./scripts/sparknet-install-units.sh $(if $(APPLY),--apply,)
@@ -245,6 +261,19 @@ registry-fetch: ## install a signed registry publication (PUBLICATION=... [DRY_R
 	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh --publication "$(PUBLICATION)" \
 	  $(if $(DRY_RUN),--dry-run) $(if $(JSON),--json)
 
+vault-health: ## Diagnose the vault (read-only; writes 00_System/vault-health.json)
+	@$(PY) $(FABRIC_ROOT)/scripts/sparknet-vault-health.py --root "$(VAULT_ROOT)"
+
+vault-heal: ## Safe derived repairs only (skeleton, shims, CONTEXT.md, health report)
+	@$(PY) $(FABRIC_ROOT)/scripts/sparknet-vault-health.py --root "$(VAULT_ROOT)" --repair
+
+rfi-request: ## Ask the Master for scoped knowledge (QUESTION= SCOPE=cat1,cat2 [REQUEST_ID=])
+	@test -n "$(QUESTION)" || (echo "QUESTION=... is required" >&2; exit 1)
+	@test -n "$(SCOPE)" || (echo "SCOPE=cat1,cat2 is required" >&2; exit 1)
+	@$(PY) "$(VAULT_ROOT)/services/sparknet-rfi-client.py" --vault-root "$(VAULT_ROOT)" \
+	  --question "$(QUESTION)" --scope "$(SCOPE)" $(if $(REQUEST_ID),--request-id "$(REQUEST_ID)") \
+	  $(if $(ENDPOINT),--endpoint "$(ENDPOINT)")
+
 registry-status: ## installed publication sequence and this node's capabilities
 	@$(ROLE_ROOT)/scripts/sparknet-registry-fetch.sh --status
 
@@ -284,7 +313,7 @@ admin-agent-help: ## Admin agent --help / --serve (peer PLAN Step 12; no-op with
 # OPENCODE_VERSION / CONTAINER_PLATFORMS are the knobs a rebuild changes; the
 # image and compose must agree on OPENCODE_VERSION (the test suite asserts it).
 
-OPENCODE_VERSION ?= 1.18.35
+OPENCODE_VERSION ?= 2.2.5
 CONTAINER_PLATFORMS ?= linux/arm64,linux/amd64
 # The buildkit sandbox DNS on the fabric host is unreliable (apt/git clone fail
 # with "Temporary failure resolving"); joining the host network namespace makes
@@ -293,12 +322,26 @@ CONTAINER_BUILD_NET ?= --network=host
 # The local store cannot --load a manifest list; this maps uname to buildx.
 HOST_ARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 
+OPENCODE_RUNTIME_VERSION ?= 2.2.5
+OPENCODE_RUNTIME_BASE ?= sparknet-spark-node:dev
+OPENCODE_RUNTIME_DIR := $(VAULT_ROOT)/configs/opencode-runtime
+
+opencode-runtime: ## Build the per-user OpenCode sandbox image (pinned, no CUDA)
+	@set -e; arch="$$(uname -m)"; case "$$arch" in 	  aarch64|arm64) asset=arm64; targetarch=arm64 ;; 	  x86_64|amd64) asset=x64; targetarch=amd64 ;; 	  *) echo "unsupported host arch: $$arch" >&2; exit 1 ;; 	esac; 	tarball="$(OPENCODE_RUNTIME_DIR)/opencode-linux-$$targetarch.tar.gz"; 	if [ ! -s "$$tarball" ]; then 	  echo "downloading opencode $(OPENCODE_RUNTIME_VERSION) ($$asset)"; 	  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v$(OPENCODE_RUNTIME_VERSION)/opencode-linux-$$asset.tar.gz" -o "$$tarball"; 	fi; 	docker build 	  --build-arg BASE_IMAGE="$(OPENCODE_RUNTIME_BASE)" 	  --build-arg OPENCODE_VERSION="$(OPENCODE_RUNTIME_VERSION)" 	  -t "sparknet-opencode-runtime:$(OPENCODE_RUNTIME_VERSION)" 	  "$(OPENCODE_RUNTIME_DIR)"; 	docker run --rm --entrypoint opencode "sparknet-opencode-runtime:$(OPENCODE_RUNTIME_VERSION)" --version
+
+opencode-runtime-clean: ## Remove the downloaded sandbox runtime tarball
+	@rm -f "$(OPENCODE_RUNTIME_DIR)"/opencode-linux-*.tar.gz
+
+opencode-certify: ## Run the real pinned OpenCode v2 API certification
+	@set -e; arch="$$(uname -m)"; case "$$arch" in 	  aarch64|arm64) asset=arm64 ;; 	  x86_64|amd64) asset=x64 ;; 	  *) echo "unsupported host arch: $$arch" >&2; exit 1 ;; 	esac; 	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; 	echo "downloading opencode $(OPENCODE_RUNTIME_VERSION) ($$asset) for certification"; 	curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v$(OPENCODE_RUNTIME_VERSION)/opencode-linux-$$asset.tar.gz" -o "$$tmp/opencode.tar.gz"; 	tar -xzf "$$tmp/opencode.tar.gz" -C "$$tmp" opencode; 	OPENCODE_BIN="$$tmp/opencode" "$(PY)" -m pytest "$(FABRIC_ROOT)/tests/test_opencode_v2_integration.py" -q
+
 container-build: ## make dist, stage the bundle, buildx both architectures (registry-ready)
 	@$(MAKE) --no-print-directory dist $(if $(FROM_GIT),FROM_GIT=$(FROM_GIT),)
 	@mkdir -p "$(VAULT_ROOT)/container/context"
 	@cp "$$(ls -t "$(FABRIC_ROOT)"/dist/sparknet-peer-*.tar.gz | head -1)" \
 		"$(VAULT_ROOT)/container/context/sparknet-peer.tar.gz"
 	@docker buildx build $(CONTAINER_BUILD_NET) --platform "$(CONTAINER_PLATFORMS)" \
+		--build-arg OPENCODE_VERSION="$(OPENCODE_VERSION)" \
 		-t "sparknet-peer-node:$(OPENCODE_VERSION)" \
 		-f "$(VAULT_ROOT)/container/Dockerfile" "$(FABRIC_ROOT)"
 	@docker buildx build $(CONTAINER_BUILD_NET) --platform "$(CONTAINER_PLATFORMS)" \
@@ -307,6 +350,7 @@ container-build: ## make dist, stage the bundle, buildx both architectures (regi
 
 container-load: ## Build the HOST architecture with --load, for local runs/tests
 	@docker buildx build $(CONTAINER_BUILD_NET) --load --platform "linux/$(HOST_ARCH)" \
+		--build-arg OPENCODE_VERSION="$(OPENCODE_VERSION)" \
 		-t "sparknet-peer-node:$(OPENCODE_VERSION)" \
 		-f "$(VAULT_ROOT)/container/Dockerfile" "$(FABRIC_ROOT)"
 	@docker buildx build $(CONTAINER_BUILD_NET) --load --platform "linux/$(HOST_ARCH)" \
@@ -314,19 +358,19 @@ container-load: ## Build the HOST architecture with --load, for local runs/tests
 		-f "$(VAULT_ROOT)/container/anchor/Dockerfile" "$(VAULT_ROOT)/container"
 
 container-config: ## Validate the node container compose parses (no images pulled)
-	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" config --quiet
+	@OPENCODE_VERSION="$(OPENCODE_VERSION)" docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" config --quiet
 
 container-preflight: ## Prove chattr +i holds on the .state filesystem before relying on it
 	@./scripts/sparknet-chattr-preflight.sh
 
 container-up: container-preflight ## Preflight, then bring the node container up
-	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" up -d
+	@OPENCODE_VERSION="$(OPENCODE_VERSION)" docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" up -d
 
 container-health: ## Per-service container health
-	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" ps -a
+	@OPENCODE_VERSION="$(OPENCODE_VERSION)" docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" ps -a
 
 container-down: ## Tear the node container down
-	@docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" down
+	@OPENCODE_VERSION="$(OPENCODE_VERSION)" docker compose -f "$(VAULT_ROOT)/configs/container/docker-compose.yml" down
 
 # --- Step 7 MASTERSPIKE: the llm-wiki format as an inference artifact ----------
 # Both the Ollama Modelfile and the vLLM system-prompt artifact are generated

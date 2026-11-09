@@ -5,5 +5,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/sparknet-env.sh"
 
+# The role's deploy-time .env carries node identity, the Qdrant key and the
+# uplift endpoint. A root service must not source the user-writable vault copy:
+# a local writer could inject shell or replace the Master pin. Root reads a
+# root-owned copy at /etc/sparknet/peer.env, installed by the units installer.
+if [[ "$(id -u)" -eq 0 ]]; then
+  if [ -f /etc/sparknet/peer.env ]; then
+    set -a
+    . /etc/sparknet/peer.env
+    set +a
+  fi
+elif [ -f "$SPARKNET_VAULT_ROOT/.env" ]; then
+  set -a
+  . "$SPARKNET_VAULT_ROOT/.env"
+  set +a
+fi
+
 # Run with absolute paths, clean env where appropriate
 exec "$@"

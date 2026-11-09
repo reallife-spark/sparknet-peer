@@ -632,3 +632,27 @@ def test_anchor_repins_on_failure_so_a_failed_run_never_leaves_it_writable() -> 
     handler_name = trap_line.split()[1]
     handler_body = text.split(f"{handler_name}()", 1)[1].split("\n}", 1)[0]
     assert "chattr +i" in handler_body, f"the {handler_name} handler must re-pin the config on a non-zero exit"
+
+
+def test_render_rejects_interface_path_traversal(tmp_path: Path) -> None:
+    proc = _render(
+        ["--apply"],
+        env={
+            "SPARKNET_WG_INTERFACE": "../escaped",
+            "SPARKNET_WG_RENDER_DIR": str(tmp_path / "render"),
+        },
+    )
+    assert proc.returncode != 0
+    assert not (tmp_path / "escaped.conf").exists()
+
+
+def test_render_rejects_endpoint_config_injection(tmp_path: Path) -> None:
+    proc = _render(
+        ["--apply"],
+        env={
+            "SPARKNET_WG_MASTER_ENDPOINT": "10.100.0.1:51820\nPostUp = touch /tmp/pwn",
+            "SPARKNET_WG_RENDER_DIR": str(tmp_path / "render"),
+        },
+    )
+    assert proc.returncode != 0
+    assert not (tmp_path / "render" / "wg0.conf").exists()

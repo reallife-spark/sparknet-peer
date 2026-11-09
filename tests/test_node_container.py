@@ -34,7 +34,7 @@ HEALTHCHECK = CONTAINER / "healthcheck.sh"
 COMPOSE = ROLE_ROOT / "configs" / "container" / "docker-compose.yml"
 PREFLIGHT = ROLE_ROOT / "scripts" / "sparknet-chattr-preflight.sh"
 
-PINNED_OPENCODE = "1.18.35"
+PINNED_OPENCODE = "2.2.5"
 PINNED_WG = "0.0.20230223"
 
 
@@ -193,6 +193,36 @@ def test_anchor_has_tunnel_privilege_and_readonly_config():
 def test_app_healthcheck_uses_the_image_script():
     health = _compose()["services"]["app"]["healthcheck"]
     assert "sparknet-healthcheck" in str(health.get("test", []))
+
+
+def test_compose_image_tracks_the_pinned_opencode_version():
+    image = _compose()["services"]["app"]["image"]
+    assert image in (
+        f"sparknet-peer-node:{PINNED_OPENCODE}",
+        f"sparknet-peer-node:${{OPENCODE_VERSION:-{PINNED_OPENCODE}}}",
+    ), "the compose image and the Dockerfile pin must agree"
+
+
+def test_runtime_asset_name_matches_the_makefile():
+    makefile = (ROLE_ROOT / "Makefile").read_text()
+    runtime = (ROLE_ROOT / "configs" / "opencode-runtime" / "Dockerfile").read_text()
+    assert "targetarch=amd64" in makefile and "targetarch=arm64" in makefile
+    assert "opencode-linux-$$targetarch.tar.gz" in makefile
+    assert "COPY opencode-linux-${TARGETARCH}.tar.gz" in runtime
+
+
+def test_node_opencode_v2_requires_a_password():
+    entrypoint = ROLE_ROOT.parent / "spark-entrypoint.sh"
+    if not entrypoint.is_file():
+        pytest.skip("the fabric-root node entrypoint is not part of a role bundle")
+    text = entrypoint.read_text()
+    assert "OPENCODE_SERVER_PASSWORD:?" in text
+    assert "4204 engine" in text
+
+
+def test_makefile_passes_opencode_version_to_compose():
+    makefile = (ROLE_ROOT / "Makefile").read_text()
+    assert 'OPENCODE_VERSION="$(OPENCODE_VERSION)" docker compose' in makefile
 
 
 def test_no_service_claims_a_gpu_or_overlay_port():

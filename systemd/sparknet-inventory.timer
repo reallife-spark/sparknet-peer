@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the sparknet inventory every two minutes
+
+[Timer]
+OnCalendar=*:0/2
+RandomizedDelaySec=20
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+{
+  "schema": "sparknet-exec-policy/1",
+  "allowed_argv": [
+    {"binary": "pwd", "args": []},
+    {"binary": "ls", "args": ["-la"]},
+    {"binary": "git", "args": ["status", "--short"]}
+  ],
+  "cwd_roots": ["01_Inbox", "05_Knowledge"],
+  "env_allow": ["HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR", "USER", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"],
+  "max_timeout_seconds": 30,
+  "max_output_bytes": 65536,
+  "approval_ttl_seconds": 300,
+  "audit_path": ".state/exec-audit.jsonl"
+}

@@ -32,7 +32,7 @@ services:
   # be its network. .state is bound from the host and never a named volume, so
   # keys survive app recreation and never leak into image layers.
   app:
-    image: sparknet-peer-node:1.18.35
+    image: sparknet-peer-node:${OPENCODE_VERSION:-2.2.5}
     container_name: sparknet-node
     network_mode: "service:anchor"
     depends_on:

@@ -1,0 +1,11 @@
+[Unit]
+Description=Push a sparknet Qdrant snapshot every fifteen minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

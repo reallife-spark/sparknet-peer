@@ -1,5 +1,5 @@
 {
-  "node_id": "sparknet-node-0001",
+  "node_id": "sparknet-node-0002",
   "role": "peer",
   "wireguard_public_key_b64": "REPLACE_WITH_NODE_WG_PUBLIC_KEY",
   "overlay_ipv4": "10.100.0.2/32",

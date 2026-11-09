@@ -17,7 +17,7 @@ The peer's host firewall is **iptables**, installed by:
   a Docker restart)
 
 It builds `SPARKNET-FW-IN` and `SPARKNET-FW-FWD` and protects the published
-surfaces `8181`, `11434` and `18000`. Allowed sources are loopback, the LAN, the
+surfaces `8181` and `11434`. Qdrant binds loopback only on `6333`/`6334` and is not a firewall-protected LAN surface. Allowed sources are loopback, the LAN, the
 `wg1` overlay, Docker bridges and link-local. It does not change the default
 `INPUT` policy.
 

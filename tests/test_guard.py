@@ -67,6 +67,7 @@ def authorized_vault(tmp_path: Path, master_key: Ed25519PrivateKey) -> Path:
 
     raw = master_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     (dest / "manifests" / "keys" / "master-ed25519.pub.b64").write_text(base64.b64encode(raw).decode() + "\n")
+    (dest / "manifests" / "keys" / "master-ed25519.pub.b64").chmod(0o600)
 
     # Sign this node for guard-apply using the real authz implementation.
     sys.path.insert(0, str(VAULT_ROOT / "services"))
@@ -405,6 +406,7 @@ def test_missing_guard_apply_capability_is_rejected(tmp_path: Path, master_key) 
 
     raw = master_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     (dest / "manifests" / "keys" / "master-ed25519.pub.b64").write_text(base64.b64encode(raw).decode() + "\n")
+    (dest / "manifests" / "keys" / "master-ed25519.pub.b64").chmod(0o600)
     sparknet_authz = guardmod._load_authz_module()
     identity = json.loads((dest / "manifests" / "node-identity.json").read_text())
     entry = sparknet_authz.sign_authorization(identity, master_key, ["telemetry"])
@@ -434,6 +436,7 @@ def test_revoked_node_cannot_apply(tmp_path: Path, master_key) -> None:
 
     raw = master_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     (dest / "manifests" / "keys" / "master-ed25519.pub.b64").write_text(base64.b64encode(raw).decode() + "\n")
+    (dest / "manifests" / "keys" / "master-ed25519.pub.b64").chmod(0o600)
     sparknet_authz = guardmod._load_authz_module()
     identity = json.loads((dest / "manifests" / "node-identity.json").read_text())
     entry = sparknet_authz.sign_authorization(identity, master_key, ["guard-apply"])
@@ -606,8 +609,9 @@ def test_apply_patch_refuses_when_relock_fails(tmp_path: Path, monkeypatch, caps
 
     def _run(argv, *, dry_run: bool) -> None:
         calls.append(argv)
-        # The unlock (-i) succeeds; the re-lock (+i) fails.
-        if argv[0] == "chattr" and argv[1] == "+i":
+        # The staged-file preflight and the target unlock succeed; only the
+        # target's final re-lock fails.
+        if argv[0] == "chattr" and argv[1] == "+i" and argv[2] == str(target):
             raise guardmod.Refusal(500, "privileged_command_failed", "chattr: Operation not supported")
 
     monkeypatch.setattr(guardmod, "_run", _run)
@@ -615,7 +619,7 @@ def test_apply_patch_refuses_when_relock_fails(tmp_path: Path, monkeypatch, caps
     with pytest.raises(guardmod.Refusal) as caught:
         guardmod.apply_patch(target, b"new", dry_run=False)
     assert caught.value.code == "immutability_not_restored"
-    assert target.read_bytes() == b"new"
+    assert target.read_bytes() == b"old", "a failed re-lock must restore the original bytes"
 
 
 # --- the earlier stub is gone -------------------------------------------------
@@ -1049,3 +1053,39 @@ def test_the_rfi_route_refuses_a_tampered_answer(harness, authorized_vault, mast
     status, body = harness.post(forged, path="/api/v1/rfi")
     assert status == 400
     assert body["code"] == "digest_mismatch"
+
+
+def test_apply_patch_preserves_the_target_mode(tmp_path: Path, monkeypatch) -> None:
+    """A protected WireGuard config stays 0600 after a patch."""
+    target = tmp_path / "wg1.conf"
+    target.write_text("old\n")
+    target.chmod(0o600)
+    monkeypatch.setattr(guardmod, "_run", lambda argv, *, dry_run: None)
+    monkeypatch.setattr(guardmod, "_is_immutable", lambda _p: True)
+    guardmod.apply_patch(target, b"new\n", dry_run=False)
+    assert target.read_bytes() == b"new\n"
+    assert (target.stat().st_mode & 0o777) == 0o600
+
+
+def test_group_writable_master_pin_is_refused(tmp_path: Path, master_key: Ed25519PrivateKey) -> None:
+    """A pin the peer user can rewrite is not a pin."""
+    from cryptography.hazmat.primitives import serialization
+
+    key_dir = tmp_path / "vault" / "manifests" / "keys"
+    key_dir.mkdir(parents=True)
+    raw = master_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    path = key_dir / "master-ed25519.pub.b64"
+    path.write_text(base64.b64encode(raw).decode() + "\n")
+    path.chmod(0o664)
+    with pytest.raises(ValueError, match="group/other writable"):
+        guardmod.load_master_pubkey(tmp_path / "vault")
+    path.chmod(0o600)
+    assert guardmod.load_master_pubkey(tmp_path / "vault")
+
+
+def test_a_corrupt_replay_store_refuses_to_start(tmp_path: Path):
+    path = tmp_path / "replay.json"
+    path.write_text("{not-json")
+    with pytest.raises(guardmod.Refusal) as exc:
+        guardmod.ReplayGuard(store_path=path)
+    assert exc.value.code == "replay_store_corrupt"

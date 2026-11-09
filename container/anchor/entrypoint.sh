@@ -39,7 +39,20 @@ if [ ! -s "$conf" ]; then
 fi
 
 dev=wgcore
-ip link add "$dev" type wireguard
+# Prefer the kernel implementation. Only when the kernel has no WireGuard
+# module do we let wireguard-go create the interface; creating it first and then
+# handing it to wireguard-go collides with the existing link.
+if ip link add "$dev" type wireguard 2>/dev/null; then
+  wg setconf "$dev" "$conf"
+  ip link set "$dev" up
+  exec sleep infinity
+fi
+wireguard-go -f "$dev" &
+go_pid=$!
+for _ in $(seq 1 50); do
+  ip link show "$dev" >/dev/null 2>&1 && break
+  sleep 0.1
+done
 wg setconf "$dev" "$conf"
-# Userspace tunnel: wireguard-go owns the interface it created.
-wireguard-go -f "$dev"
+ip link set "$dev" up
+wait "$go_pid"

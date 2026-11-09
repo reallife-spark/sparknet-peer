@@ -1,0 +1,18 @@
+# Inventory mirror: users, models, knowledge bases and content-free usage.
+#
+# Oneshot, node user. Writes the local `sparknet-inventory` Qdrant collection
+# and pushes a signed inventory batch to the Master's 8091 intake. A failed
+# push is spooled by the agent; the next run drains it. It never stores prompt
+# or response text in Qdrant.
+
+[Unit]
+Description=Sparknet inventory mirror (Qdrant + Master 8091)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-inventory --once
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

@@ -1,0 +1,19 @@
+# Uplift snapshot sync: Qdrant -> Master 8091.
+#
+# Oneshot, node user. Snapshots every local Qdrant collection except the stamp
+# collection, pushes each through the signed uplift client, then drains the
+# durable outbox. It holds no signing key beyond the node identity key and
+# cannot reach the Master signer.
+
+[Unit]
+Description=Sparknet uplift snapshot sync (Qdrant -> Master 8091)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-uplift-push snapshot --all
+ExecStartPost=%h/.local/bin/sparknet-uplift-push drain
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

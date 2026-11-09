@@ -471,7 +471,7 @@ def test_the_share_regime_manifest_matches_the_engine() -> None:
     assert set(manifest["clocks"]) == {"invite_acceptance", "idle_close", "ratification", "share_absolute"}
     assert manifest["authority_boundary"]["grants_no_authority"] is True
     assert "10.100.0.1/32" in manifest["authority_boundary"]["authority_plane_invariant"]
-    assert manifest["status"] == "wired, not deployed"
+    assert manifest["status"] in ("listener built, not deployed", "live on the peer_pair; 4203 not bound")
 
 
 def test_the_manifest_and_engine_agree_on_the_contract_types() -> None:

@@ -62,6 +62,7 @@ import os
 import shutil
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -230,8 +231,49 @@ def _disk_usage(vault_root: Path) -> tuple[int, int] | None:
     return usage.total, usage.free
 
 
+def memory_payload(vault_root: Path) -> dict[str, Any] | None:
+    """Return content-free memory counts for the status payload.
+
+    The Master gets posture, never content. A missing gateway or token is an
+    omitted block, not a fabricated zero.
+    """
+    state = Path(os.environ.get("SPARKNET_STATE_DIR", "").strip() or (vault_root / ".state"))
+    try:
+        token = (state / "memory.local.token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not token:
+        return None
+    base = os.environ.get("SPARKNET_MEMORY_GATEWAY_URL", "http://127.0.0.1:4093").rstrip("/")
+    query = urllib.parse.urlencode({"vault_path": str(vault_root)})
+    request = urllib.request.Request(base + "/v1/memory/status?" + query)
+    request.add_header("Accept", "application/json")
+    request.add_header("X-Sparknet-Local-Token", token)
+    request.add_header("X-Sparknet-Vault-Path", str(vault_root))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=5) as response:
+            status = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    policy = status.get("policy") if isinstance(status.get("policy"), dict) else {}
+    return {
+        "schema": status.get("schema") or "sparknet-memory-status/1",
+        "vaults": 1,
+        "records": status.get("records", 0),
+        "bytes": status.get("bytes", 0),
+        "by_type": status.get("by_type") or {},
+        "by_state": status.get("by_state") or {},
+        "capture": bool(policy.get("capture", True)),
+        "last_write": status.get("newest"),
+    }
+
+
 def status_payload(
-    identity: dict[str, Any], capabilities: list[str], trust: dict[str, Any] | None = None
+    identity: dict[str, Any],
+    capabilities: list[str],
+    trust: dict[str, Any] | None = None,
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The stable facts the Master needs to place this node. No authority in it.
 
@@ -246,6 +288,8 @@ def status_payload(
     }
     if trust is not None:
         payload["trust"] = trust
+    if memory:
+        payload["memory"] = memory
     return payload
 
 
@@ -364,7 +408,7 @@ def build_reports(
     reports = []
     for kind in kinds:
         if kind == "status":
-            payload = status_payload(identity, capabilities, trust)
+            payload = status_payload(identity, capabilities, trust, memory_payload(vault_root))
         elif kind == "metrics":
             payload = metrics_payload(vault_root)
         else:  # the CLI restricts this; a library caller gets a real error

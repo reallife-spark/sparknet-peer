@@ -23,8 +23,12 @@ source "$SCRIPT_DIR/sparknet-env.sh"
 # by contracts/overlay.json, not the iface name). Default wg0; a deployment that
 # brings the overlay up out-of-band sets SPARKNET_WG_INTERFACE to match, e.g. wg1.
 IFACE="${SPARKNET_WG_INTERFACE:-wg0}"
+[[ "$IFACE" =~ ^[A-Za-z0-9_]{1,15}$ ]] || { echo "invalid SPARKNET_WG_INTERFACE: $IFACE" >&2; exit 1; }
 TEMPLATE="${SPARKNET_WG_TEMPLATE:-$SPARKNET_VAULT_ROOT/configs/wireguard/wg0-node.conf.template}"
 RENDER_DIR="${SPARKNET_WG_RENDER_DIR:-$SPARKNET_STATE_DIR/wireguard}"
+[[ "$RENDER_DIR" = /* && "$RENDER_DIR" != *..* ]] || { echo "invalid SPARKNET_WG_RENDER_DIR: $RENDER_DIR" >&2; exit 1; }
+RENDER_DIR="$(realpath -m "$RENDER_DIR")"
+[[ "$RENDER_DIR" != "/" ]] || { echo "refusing a root render directory" >&2; exit 1; }
 RENDERED="$RENDER_DIR/$IFACE.conf"
 LISTEN_PORT="${SPARKNET_WG_LISTEN_PORT:-51820}"
 NODE_ADDRESS="${SPARKNET_WG_NODE_ADDRESS:-}"
@@ -82,6 +86,18 @@ if [[ ! "$MASTER_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
 fi
 if [[ ! "$NODE_ADDRESS" =~ ^10\.100\.0\.[0-9]+/32$ ]]; then
   die "node address must be a /32 in 10.100.0.0/24 (got: $NODE_ADDRESS)"
+fi
+if [[ ! "$LISTEN_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$LISTEN_PORT < 1 || 10#$LISTEN_PORT > 65535 )); then
+  die "listen port must be 1-65535 (got: $LISTEN_PORT)"
+fi
+if [[ ! "$MASTER_ENDPOINT" =~ ^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._-]+):([0-9]{1,5})$ ]]; then
+  die "master endpoint must be host:port (got: $MASTER_ENDPOINT)"
+fi
+if (( 10#${BASH_REMATCH[2]} < 1 || 10#${BASH_REMATCH[2]} > 65535 )); then
+  die "master endpoint port must be 1-65535 (got: $MASTER_ENDPOINT)"
+fi
+if grep -Eq '^[[:space:]]*(PreUp|PostUp|PreDown|PostDown)[[:space:]]*=' "$TEMPLATE"; then
+  die "WireGuard hook directives are not allowed in the vault template"
 fi
 
 log "template: $TEMPLATE"

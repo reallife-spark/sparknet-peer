@@ -1,10 +1,9 @@
 {
   "schema": "sparknet-share-regime/1",
   "contract": "share-regime",
-  "description": "The clocked, cross-node share regime (peer PLAN Step 8): the invite→accept→(ratify)→close lifecycle of contracts/share-protocol.md, implemented once in peer-node/services/sparknet-share-regime.py and proven in-process by peer-node/tests/test_share_regime.py. The engine reads the machine contracts (capabilities.json share_types + share_clocks, overlay.json governance_mode + data-plane stanza, ports.json share ports) and refuses to run if they are missing, so it cannot silently drift from the contract. The bridge's /session/:id/share verbs delegate to it, so there is no second copy of the rules.",
+  "description": "The clocked, cross-node share regime (peer PLAN Step 8): the invite\u2192accept\u2192(ratify)\u2192close lifecycle of contracts/share-protocol.md, implemented once in peer-node/services/sparknet-share-regime.py and proven in-process by peer-node/tests/test_share_regime.py. The engine reads the machine contracts (capabilities.json share_types + share_clocks, overlay.json governance_mode + data-plane stanza, ports.json share ports) and refuses to run if they are missing, so it cannot silently drift from the contract. The bridge's /session/:id/share verbs delegate to it, so there is no second copy of the rules.",
   "authored": "2026-10-10",
-  "status": "wired, not deployed",
-
+  "status": "live on the peer_pair; 4203 not bound",
   "engine": {
     "path": "peer-node/services/sparknet-share-regime.py",
     "schema": "sparknet-share/1",
@@ -12,17 +11,21 @@
     "governance_source": "contracts/overlay.json governance_mode (solo=1, peer_pair=2, master_governed=3+); recomputed on every share request, never cached",
     "clock_source": "contracts/capabilities.json share_clocks; contract defaults (invite 1h, idle 20m, ratification 2h, absolute 10h) are what a deployment runs, and tests inject the four clocks in seconds"
   },
-
-  "share_types": ["kb-view", "kb-share", "session-view", "session-handoff", "full"],
+  "share_types": [
+    "kb-view",
+    "kb-share",
+    "session-view",
+    "session-handoff",
+    "full"
+  ],
   "narrowing": "a receiver may accept a narrower type than offered, never a wider one (capabilities.json share_types.narrowing_only); only 'full' carries the explicit includes set",
   "clocks": {
-    "invite_acceptance": "1h — a recipient may accept within the window",
-    "idle_close": "20m — a *temporary* share closes on inactivity; a permanent share is not idle-closed",
-    "ratification": "2h — master_governed only; silence is a refusal, never an 'awaiting ratification' state",
-    "share_absolute": "10h — a hard cap for both roles; every share, permanent included, ends here"
+    "invite_acceptance": "1h \u2014 a recipient may accept within the window",
+    "idle_close": "20m \u2014 a *temporary* share closes on inactivity; a permanent share is not idle-closed",
+    "ratification": "2h \u2014 master_governed only; silence is a refusal, never an 'awaiting ratification' state",
+    "share_absolute": "10h \u2014 a hard cap for both roles; every share, permanent included, ends here"
   },
   "trust": "an accepted peer arrives flagged; in master_governed a Master ratification moves it to authenticated and *retains* the flag (capabilities.json trust_levels.retained_after_ratification); in peer_pair both endpoints stay flagged because nothing arbitrates",
-
   "department_boundary": {
     "added": "2026-10-24 (fabric PLAN Step 66B)",
     "capability": "cross-department-share",
@@ -34,20 +37,17 @@
     "audit": "an inbound offer a node will refuse is still recorded, with the boundary marked and `permitted_by` null. An attempt refused silently leaves no evidence it was made, and the evidence is the point.",
     "widens_nothing_else": "the holder still needs the ordinary share grant, still obeys the four clocks, and in master_governed mode still needs ratification"
   },
-
   "actions": {
     "stanza-up": "the acceptor's host may bring up the time-boxed data-plane stanza",
     "teardown-stanza": "on explicit close, idle, absolute expiry, or refusal",
     "isolate-data-plane": "on non-ratification: the fabric data plane is severed while the authority-and-evidence channel to the Master stays open",
     "re-evaluate": "a third node joining mid-share re-evaluates the live share instead of grandfathering it; the share is closed reason re_evaluated and may be re-offered under the new mode"
   },
-
   "authority_boundary": {
     "grants_no_authority": true,
     "authority_plane_invariant": "a peer's [Peer] AllowedIPs stays exactly 10.100.0.1/32 (contracts/overlay.json peer_allowed_ips_rule); the share stanza is time-boxed data-plane only and never widens it",
     "structural": "the engine opens no sockets, loads no keys and holds no key material; a share is never an authority transfer",
-    "ports": "4201 share-intake / 4202 session-transfer / 4203 share-ratification are all spec-only in contracts/ports.json (no listener); the engine carries the same message shapes the wire would and is exercised in-process"
+    "ports": "4201/4202 are live on the peer_pair behind signed transport and a 0600 Unix control socket; 4203 is built and rehearsed on loopback but no unit is enabled. A peer still cannot ratify: only the Master key signs the closed ratification envelope, and the 2 h clock is enforced locally."
   },
-
-  "not_built_yet": "The two-or-more-node conversation, the stanza application and nftables exception, the live 4201/4202/4203 listeners, the Master's ratification service and the Master-hosted evidence repo are target-node legs (DoD items 5-8): `DoD: confirm: user`. This host has one peer, no Master and no second node, so cross-node behaviour is proven with in-process node pairs here and never reported as a live deployment."
+  "not_built_yet": "Live 2026-10-31: sparknet-node-0001 (agx64) and sparknet-node-0002 (agx32) exchanged a real kb-share and session-handoff over 4201/4202; payloads staged in 01_Inbox/share-<id>/ and both shares closed. Still target-node legs (`DoD: confirm: user`): the 4203 listener on a 3+ node live fleet, stanza application, the nftables/iptables exception, and the Master-hosted evidence repo."
 }

@@ -502,3 +502,28 @@ def test_sign_via_the_cli_accepts_a_raw_seed(tmp_path: Path, identity: dict) -> 
     )
     assert rc == 0
     assert json.loads(out.read_text())["signature_b64"]
+
+
+def test_malformed_registry_timestamps_fail_closed(master_key, identity: dict) -> None:
+    entry = authz.sign_authorization(identity, master_key, ["telemetry"], now=NOW)
+    entry["expires_at"] = "not-a-timestamp"
+    decision = authz.evaluate(identity, _registry([entry]), master_key.public_key(), now=NOW)
+    assert not decision.allowed
+    assert decision.reason == authz.REASON_MALFORMED
+    entry = authz.sign_authorization(identity, master_key, ["telemetry"], now=NOW)
+    entry["issued_at"] = "not-a-timestamp"
+    decision = authz.evaluate(identity, _registry([entry]), master_key.public_key(), now=NOW)
+    assert not decision.allowed
+    assert decision.reason == authz.REASON_MALFORMED
+
+
+def test_load_public_key_accepts_hex(tmp_path: Path) -> None:
+    private, _ = authz.generate_keypair()
+    key = authz.private_key_from_b64(private)
+    path = tmp_path / "public.hex"
+    raw = key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    path.write_text(raw.hex() + "\n")
+    assert authz.public_key_b64(authz.load_public_key(path)) == authz.public_key_b64(key.public_key())

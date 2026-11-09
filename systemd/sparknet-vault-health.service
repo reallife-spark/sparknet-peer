@@ -1,0 +1,19 @@
+# Daily vault health, with safe derived repairs only.
+#
+# The service runs as the node user and calls the generated shim, which resolves
+# this vault. It never forces a signature, moves a user page, edits the ledger,
+# touches the registry or writes a protected file: those are reported for a
+# human or for Plan → Permission → Execute. See docs/self-healing.md.
+
+[Unit]
+Description=Sparknet vault health (safe derived repairs only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-vault-health --repair
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target
