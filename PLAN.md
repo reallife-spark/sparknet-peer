@@ -1,7 +1,7 @@
 ---
 title: sparknet peer-node Plan
-updated: 2026-11-06
-current: 17
+updated: 2026-11-09
+current: 19
 ---
 
 # sparknet peer-node — Active Plan
@@ -203,6 +203,34 @@ current: 17
     on a knowledge channel; `make test-role`, `make contract-test`,
     `make context-check`, `make bundle-verify ROLE=peer`, `make ci`; live legs
     `DoD: confirm: user`.
+
+## Step 19 — Understand-Anything + issue surfaces (peer half)
+
+- [ ] **Step 19** — Add the peer half of the Step 91 integration. Opened ahead
+  of the queued Step 18 by operator direction on 2026-11-09; Step 18 remains
+  queued and is not cancelled.
+  - [x] **19A — Skills.** Load the nine `/understand*` skills, the Matt Pocock
+    engineering family and `setup-matt-pocock-skills` in the peer workspace.
+  - [x] **19B — Issue tracker.** Run the setup with the local markdown tracker;
+    write `docs/agents/issue-tracker.md`, `docs/agents/domain.md`,
+    `docs/agents/triage-labels.md`, `GLOSSARY.md`, `docs/adr/` and
+    `.scratch/issues/`.
+  - [x] **19C — Pusher.** `services/sparknet-issue-push.py` reads local issues,
+    redacts, signs through `shared/sparknet-http.py` and posts to the Master
+    `/api/v1/issues` under the `issue-report` capability.
+  - [x] **19D — Console.** The shared Understand and Issues tabs render for the
+    peer role with the peer config.
+  - **DoD**: `make -C peer-node test`, `make contract-test`, `make context-check`,
+    `make role-skills-check` and `make bundle-verify ROLE=peer` are green; the
+    local issue file schema and push payload round-trip in tests; live Master
+    delivery is `DoD: confirm: user`.
+
+  - **Status 2026-11-09 — peer half implemented.** The peer workspace loads
+    the base skill tree and the peer catalog (125 role-local, 80 base), the
+    local issue tracker and docs are in place, the signed pusher and its timer
+    are installed by the unit installer, and `make -C peer-node test`,
+    `make bundle-verify ROLE=peer` and `make ci` are green. Live Master delivery
+    from the peer is `DoD: confirm: user`.
 
 ## Next
 

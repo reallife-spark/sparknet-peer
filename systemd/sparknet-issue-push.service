@@ -1,0 +1,21 @@
+# The peer's issue pusher — work items to the Master, never authority.
+#
+# Runs as the node user: it reads .scratch/issues/ and the node key, signs with
+# shared/sparknet-http.py and posts to the Master's signed /api/v1/issues route.
+# A peer without the `issue-report` capability is refused by the Master; the
+# pusher reports the refusal and exits non-zero so an operator sees it.
+#
+# Enable the timer with:
+#   systemctl --user enable --now sparknet-issue-push.timer
+
+[Unit]
+Description=Sparknet issue push (peer -> Master work items, no authority)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sparknet-issue-push --once
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

@@ -1,0 +1,11 @@
+[Unit]
+Description=Push local sparknet issues every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=30
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

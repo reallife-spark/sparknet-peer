@@ -112,12 +112,8 @@ content and take no tracking blocks. A full inventory is in
 
 ## Canonical placement
 
-- Distilled page → `05_Knowledge/<category>/`. Raw capture → `03_Sources/`
-  until distilled. Inbox intake → `01_Inbox/`.
-- Logs and telemetry → `/mnt/log/`, not the vault and not `~/`.
-- Runtime caches → `$OPENCODE_DATA_DIR`; secrets → `.state/` (gitignored,
-  mode 0700).
-- One page per file; cross-link instead of copying.
+- Distilled page → `05_Knowledge/<category>/`; raw capture → `03_Sources/`; inbox → `01_Inbox/`; one page per file, cross-link.
+- Logs/telemetry → `/mnt/log/`; caches → `$OPENCODE_DATA_DIR`; secrets → `.state/` (0700).
 
 ## Wiki suite
 
@@ -125,16 +121,19 @@ The suite is vendored at `../.opencode/skills/`; the role catalog is
 `peer-node/.opencode/skills/`. Resolve this vault first:
 
 ```bash
-for d in "$PWD" "$(dirname "$PWD")"; do
-  [ -f "$d/scripts/sparknet-wiki-env.sh" ] && { source "$d/scripts/sparknet-wiki-env.sh"; break; }
-done
+source "$( [ -f scripts/sparknet-wiki-env.sh ] && echo scripts || echo ../scripts )/sparknet-wiki-env.sh"
 ```
 
 If it fails, run `../scripts/sparknet-env-init.sh .` once. Never work around it:
-a silent fallback writes every page into a different vault. Run
-`make wiki-preflight`; then `/wiki-status`, `/wiki-ingest`, `/wiki-query`,
+a silent fallback writes every page into a different vault. Then run
+`make wiki-preflight`, `/wiki-status`, `/wiki-ingest`, `/wiki-query`,
 `/wiki-lint`, `/wiki-capture`, `/wiki-synthesize`, `/wiki-digest`,
 `/daily-update`.
+## Agent skills
+Issues: `.scratch/issues/` (`sparknet-issue/1`); see `docs/agents/issue-tracker.md`.
+Triage: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`.
+Domain docs: `GLOSSARY.md`, `docs/adr/`; see `docs/agents/domain.md`.
+
 ## Safety and scope
 
 - **Scope discipline.** Peer knowledge stays here; Master material in

@@ -8,7 +8,8 @@
     "vectors",
     "learning",
     "memory",
-    "projects"
+    "projects",
+    "understand"
   ],
   "bind": "127.0.0.1",
   "port": 8099,
@@ -39,7 +40,8 @@
     "share_regime": "manifests/share-regime.json",
     "telemetry": "/mnt/log/sparknet-telemetry.jsonl",
     "admin_events": ".state/admin-events/events.jsonl",
-    "rfi_dir": ".state/rfi-requests"
+    "rfi_dir": ".state/rfi-requests",
+    "understand": ".ua/knowledge-graph.json"
   },
   "distill": null,
   "openwebui_url": "http://127.0.0.1:8181",

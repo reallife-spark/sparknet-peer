@@ -7,6 +7,11 @@
 # Staged LLM-written pages (WIKI_STAGED_WRITES=true)
 _staging/
 
+# Local issue tracker (Matt Pocock engineering skills); machine-local.
+.scratch/
+.ua/
+.understand-anything/
+
 # Vault editor workspace state (machine-local)
 .vault-config/workspace.json
 .vault-config/workspace-mobile.json

@@ -5,10 +5,10 @@ This directory is the **role-local** addition to the base suite at
 `peer-node/` (or a subdirectory), because config resolution walks up to the
 nearest `.opencode/` directory.
 
-- Role-local skills: **90**
+- Role-local skills: **125**
 - Optional / non-standard: **0** (`claude-api`, master only)
-- Base suite: **33** skills, shared at the fabric root
-- Total visible in a role session: **123**
+- Base suite: **80** skills, shared at the fabric root
+- Total visible in a role session: **205**
 
 ## License policy
 
