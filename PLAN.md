@@ -1,7 +1,7 @@
 ---
 title: sparknet peer-node Plan
-updated: 2026-11-09
-current: 19
+updated: 2026-11-10
+current: done
 ---
 
 # sparknet peer-node — Active Plan
@@ -208,7 +208,7 @@ current: 19
 
 ## Step 19 — Understand-Anything + issue surfaces (peer half)
 
-- [ ] **Step 19** — Add the peer half of the Step 91 integration. Opened ahead
+- [x] **Step 19** — Add the peer half of the Step 91 integration. Opened ahead
   of the queued Step 18 by operator direction on 2026-11-09; Step 18 remains
   queued and is not cancelled.
   - [x] **19A — Skills.** Load the nine `/understand*` skills, the Matt Pocock
@@ -229,12 +229,11 @@ current: 19
     local issue file schema and push payload round-trip in tests; live Master
     delivery is `DoD: confirm: user`.
 
-  - **Status 2026-11-09 — peer half implemented.** The peer workspace loads
-    the base skill tree and the peer catalog (125 role-local, 80 base), the
-    local issue tracker and docs are in place, the signed pusher and its timer
-    are installed by the unit installer, and `make -C peer-node test`,
-    `make bundle-verify ROLE=peer` and `make ci` are green. Live Master delivery
-    from the peer is `DoD: confirm: user`.
+  - **Status 2026-11-10 — COMPLETE, including live delivery.** The live peer
+    at `agx32` signed `live-step91-issue` with its node key and delivered it to
+    the Master at `10.100.0.1:8090`; the Master accepted it as
+    `sparknet-node-0002`. The peer code is `a64e993`; the current peer bundle
+    rebuilt and verified. No services outside the peer live leg are claimed.
 
 ## Next
 

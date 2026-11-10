@@ -1,7 +1,7 @@
 {
   "schema": "sparknet-console/1",
   "role": "peer",
-  "node": "agx64",
+  "node": "agx32",
   "title": "Sparknet Node",
   "menus": [
     "mesh",
