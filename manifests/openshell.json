@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "component": "openshell",
+  "version": "0.1.7",
+  "release_tag": "v0.1.7",
+  "package": {
+    "name": "openshell_0.1.7-1_arm64.deb",
+    "sha256": "354f74db54b21ed34f7bacdc5c97ee35749e4d3690f2c3b83b3a6e32ac5bed05",
+    "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell_0.1.7-1_arm64.deb"
+  },
+  "images": {
+    "sandbox": "ghcr.io/nvidia/openshell/sandbox@sha256:89819c03f291d9b909c3fc2962360e24af4516627422d18f3e681829f003f347",
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06"
+  },
+  "vm": {
+    "bootstrap_image": "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852",
+    "default_image": "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852",
+    "runtime_image": "sparknet-opencode-runtime-vm:2.2.5",
+    "runtime_image_id": "sha256:2dcbe3a74fb6986a51997b78ebc3738a41f87120ad922d35ee52582a07e7ebf0",
+    "runtime_image_note": "Built locally by `make -C peer-node opencode-runtime-vm`; the ID records the dev-host validation build and is not portable."
+  },
+  "verified_on": "2026-11-10",
+  "notes": [
+    "The package checksum is from the signed v0.1.7 release's openshell-checksums-sha256.txt.",
+    "The image digests are the multi-architecture index digests; the host architecture manifest is selected at pull time.",
+    "The VM runtime image is a local build; a host rebuild produces a new image ID and must be recorded before deployment."
+  ]
+}

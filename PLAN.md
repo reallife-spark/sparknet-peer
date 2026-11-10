@@ -235,6 +235,197 @@ current: done
     `sparknet-node-0002`. The peer code is `a64e993`; the current peer bundle
     rebuilt and verified. No services outside the peer live leg are claimed.
 
+## Step 20 — OpenShell execution sandbox
+
+- [~] **Step 20 — CLOSED BY SCOPE (platform).** Replace the hand-rolled
+  per-user Docker supervisor with OpenShell as the peer execution sandbox,
+  running as the node owner's numeric UID/GID, with one vault mount, local
+  approvals and Master-signed supervision. The v0.1.7 gateway was installed
+  and authenticated on `agx32`, but the Docker driver cannot create a sandbox
+  on the current Jetson pair (Docker 26.1.3 < 28.0; kernel 5.10.216-tegra has
+  no Landlock ABI 3). The operator kept the existing Docker supervisor and
+  removed the OpenShell install. The contract/profile code remains an
+  uncommitted proposal for a supported host or a future VM-driver decision.
+  - [x] **20A — Contract surface.** Add `sandbox-supervise` to
+    `contracts/capabilities.json` and `shared/sparknet-authz.py`; add the
+    `sandbox-request` envelope and its closed action set; add
+    `contracts/sandbox-schema.json`; name `/sandbox/*` on bridge 4096; add the
+    knowledge-flow row, the README index row and ADR 0012.
+    **DoD**: `make contract-test`, `make render-check` and the envelope tests
+    are green; the capability is inert until a signed registry grant exists.
+    **Status 2026-11-10 — COMPLETE.** `sandbox-supervise` is in the shared
+    vocabulary and both definitions; the `sandbox-request` envelope is pinned
+    with a byte vector; `make contract-test`, `make render-check`,
+    `tests/test_contracts.py` and `tests/test_envelopes.py` are green. No live
+    grant is claimed.
+  - [~] **20B — Gateway service.** Use the package-managed
+    `openshell-gateway.service` (owner user service with linger, local mTLS,
+    never an unauthenticated loopback gateway); add
+    `peer-node/configs/openshell/gateway.toml` (Docker rootful,
+    `allow_driver_config`, `enable_bind_mounts`, resource admission off), the
+    env template and the operator README; pin OpenShell v0.1.7 by digest.
+    **DoD**: config preflight and the live unit pass; the gateway binds loopback
+    only and authenticates with the local mTLS bundle.
+    **Status 2026-11-10 — validated, then removed by operator decision.** The
+    v0.1.7 `.deb` was installed; `openshell-gateway.service` was active, mTLS
+    authenticated, `openshell status` Connected and `config preflight` passed
+    with `gateway.toml`. The custom sparknet unit was removed because the
+    package owns the service. The package, config and state were removed when
+    the platform blocker below closed the step.
+  - [~] **20C — Identity and profile.** Add
+    `peer-node/lib/sparknet_sandbox_profile.py` as the single owner-identity,
+    policy and one-mount source; resolve the owner UID/GID in
+    `sparknet-opencode-engine.py`, refuse 0, add a symlink-safe one-time re-own
+    from `10001:10001`, and add `--sandbox-backend docker|openshell` with docker
+    as the rollback default. 20D owns the runtime `WORKDIR` and the OpenShell
+    create/transport path.
+    **DoD**: tests prove uid/gid resolution, uid-0 refusal, the policy shape,
+    the single mount, reserved-target refusal and migration idempotency; a file
+    written in `/work` is owned `<uid>:<gid>` on the host
+    (`DoD: confirm: user`).
+    **Status 2026-11-10 — profile layer complete; not deployed.** The module
+    and engine wiring are in place; the profile and service suites are green.
+    Selecting `--sandbox-backend openshell` refuses with a named 20D message
+    rather than starting a half-wired sandbox. The live file-ownership leg is
+    blocked by the 20D platform finding.
+  - [~] **20D — Model proxy and approval surface.** Replace the per-sandbox
+    Unix socket with an authenticated host-side proxy reachable as
+    `host.openshell.internal:<port>`; keep `proposal_approval_mode=manual` and
+    `agent_policy_proposals_enabled=false`; replace the blanket reject in the
+    engine with a pending proposal the user can approve or reject.
+    **Blocker (2026-11-10):** the gateway was installed and authenticated on
+    `agx32`, but the Docker driver cannot create a sandbox. The host runs
+    Docker 26.1.3 (OpenShell requires 28.0+) and kernel 5.10.216-tegra with no
+    Landlock LSM (OpenShell requires ABI 3, Linux 6.2+); `agx64` is identical.
+    The Docker-driver plan is not deployable on this hardware. 20D was not
+    implemented against an unsupported runtime; the VM driver (`/dev/kvm` is
+    present) or a supported host is a new decision.
+    **DoD**: the sandbox reaches only the model endpoint; other egress is
+    denied; a proposal is never auto-approved; approve/reject round-trips.
+  - [~] **20E — Signed supervision.** Add `/sandbox/*` to the dispatch bridge
+    with the shared authz envelope, replay store and the `sandbox-supervise`
+    grant; translate a verified request to a local OpenShell call without
+    handing the Master the gateway credential.
+    **DoD**: unsigned, stale, replayed and unknown-capability requests are
+    refused before action; a signed request with no grant is inert; a granted
+    stop/start works; no token appears in logs.
+    **Status 2026-11-10 — not implemented; closed by platform scope.**
+  - [~] **20F — Persistent services.** Add
+    `peer-node/services/sparknet-sandbox-services.py` and its systemd unit,
+    reading a 0600 manifest, creating service sandboxes with persistent mounts
+    and never idle-pruning them.
+    **DoD**: the reconciler is idempotent; a service sandbox survives a gateway
+    restart and logout; session sandboxes still idle-stop.
+    **Status 2026-11-10 — not implemented; closed by platform scope.**
+  - [~] **20G — Gates and live leg.** Run the peer, contract, context, render,
+    SBOM, bundle and CI gates; verify on `agx32` that the sandbox runs as the
+    owner UID, writes owned files, enforces the read-only mount and egress
+    policy, accepts signed supervision and rejects unsigned requests.
+    **DoD**: named gates green; live legs `DoD: confirm: user`; rollback
+    remains `--sandbox-backend docker` until the live leg is confirmed.
+    **Status 2026-11-10 — not implemented; closed by platform scope.**
+  - **DoD**: 20A–20G each have their named gate; a cross-role change commits the
+    peer role first, then the superproject with the updated pin and contracts;
+    `make contract-test` and `make ci` are green; no live claim comes from this
+    host.
+  - **Status 2026-11-10 — CLOSED BY SCOPE.** The v0.1.7 gateway was installed
+    and authenticated on `agx32`; the Docker driver cannot create a sandbox on
+    the current Jetson pair (Docker 26.1.3 < 28.0; kernel 5.10.216-tegra has no
+    Landlock ABI 3). The operator kept the existing Docker supervisor and
+    removed the OpenShell package/config/state. 20A remains complete; 20B/20C
+    are retained as an uncommitted proposal; 20D–20G were not implemented.
+    The uplift drain was paused and its timer disabled to stop the disk fill;
+    unused images were pruned. The live DoD is not claimed.
+
+## Step 21 — OpenShell VM driver validation
+
+- [~] **Step 21 — CLOSED BY SCOPE (peer hardware).** Prove the OpenShell
+  microVM compute driver on a supported host before choosing it as the peer
+  execution path. The peer Jetson pair is blocked at the Docker/kernel layer;
+  the VM driver was validated where glibc, Docker and the kernel meet
+  OpenShell's requirements. 21A–21C are complete on the dev host; 21D remains
+  blocked on the peer.
+  - [x] **21A — VM gateway.** Install OpenShell v0.1.7 with
+    `compute_driver = "vm"`, package-managed mTLS, owner UID/GID 1000, a
+    trusted bootstrap image and the VM driver binary.
+    **DoD**: `config preflight`, `openshell status` and the driver process are
+    green.
+    **Status 2026-11-10 — COMPLETE on the dev host.** Debian forky, glibc
+    2.42, Docker 28.5.2, kernel 7.0 with Landlock, `/dev/kvm`; preflight,
+    mTLS authentication and the `openshell-driver-vm` process are green.
+  - [x] **21B — VM sandbox.** Create a microVM with a bind-mounted host
+    directory, the `sandbox` guest selector reconciled to the owner UID/GID,
+    and an exposed guest service.
+    **DoD**: the sandbox is Ready; the guest writes a host file owned
+    `<uid>:<gid>`; an exposed port returns HTTP 200.
+    **Status 2026-11-10 — COMPLETE on the dev host.** `ubuntu:24.04` reached
+    Ready; the guest resolved `sandbox` to UID/GID 1000; the virtiofs rw mount
+    produced `1000:1000` host ownership; `python:3.12-slim` on port 4200
+    returned HTTP 200 through the service URL. The probe sandboxes were
+    deleted; no peer claim is made.
+  - [x] **21C — Engine integration.** Add the VM driver config JSON, the
+    `sandbox` policy identity, the OpenCode service URL transport and the
+    host-side model proxy to the engine, then run a real OpenCode turn in a
+    microVM on the validated host.
+    **DoD**: the engine creates a VM sandbox, reaches OpenCode, and completes a
+    prompt; no Docker socket or Unix socket is used.
+    **Status 2026-11-10 — COMPLETE on the dev host.** The engine created a
+    microVM sandbox, opened an `openshell forward service` loopback port with
+    Basic auth preserved, and completed a real OpenCode prompt through the
+    host-loopback model proxy: assistant **VM-OK**. The slim VM image target
+    `opencode-runtime-vm` was added. Peer deployment is still 21D.
+  - [~] **21D — Peer deployment.** Run the VM driver on `agx32`.
+    **Blocker (2026-11-10):** the embedded `libkrun.so` requires
+    `GLIBC_2.33`, but Ubuntu 20.04 has `2.31`; the host also has Docker 26.1.3
+    (< 28.0) and kernel 5.10.216-tegra without Landlock ABI 3. The VM path is
+    proven on a supported host but is not deployable on the current Jetson
+    pair without an OS/host change. Not implemented; a supported host or a
+    host move is a new decision.
+  - **Status 2026-11-10 — 21A–21C complete on the dev host; 21D blocked.**
+    The VM driver and engine transport are viable on supported hardware. The
+    peer `agx32` keeps the current Docker supervisor; its OpenShell package
+    was removed. The dev-host gateway/config was retained as a validation bed.
+    No peer live claim is made.
+
+## Step 22 — Close the two-axis review
+
+- [~] **Step 22 — CLOSED AFTER THE FIX PASS; signed goagx republish delegated.**
+  Fix the Standards and Spec findings from the uncommitted OpenShell review:
+  contract truth, driver-neutral identity, missing listeners, owner rendering,
+  artifact pins, fail-closed migration, the VM-only profile, loader rule,
+  WORKDIR, backend split, docs inventory and the test gaps.
+  - [x] **22A — Contract truth and schema.** Remove the false `/sandbox/*`
+    route-reachable claims; make `sandbox-schema.json` driver-neutral; add
+    `uid_min`/`uid_max`; add `17670`, `11501` and `14201` to `ports.json`; bump
+    the changed schema versions; render the manifest. **Status 2026-11-10 —
+    COMPLETE.** Contract/render tests green.
+  - [x] **22B — Owner, pins and rendering.** Add `manifests/openshell.json`
+    with the package checksum and digest-pinned images; replace the committed
+    home with `gateway-vm.toml.in`; add the owner renderer and `owner.json`.
+    **Status 2026-11-10 — COMPLETE.** Render test proves owner 1500 and no
+    hardcoded `/home/raxxar` in the template.
+  - [x] **22C — Engine and profile correctness.** Source UID bounds from the
+    contract, remove the unused Docker profile API, fail closed on chown,
+    use the one loader, change `WORKDIR` to `/sandbox` and the Docker command
+    to `cd /work`, enforce the owner via `owner.json` and `WorkloadIdentity`.
+    **Status 2026-11-10 — COMPLETE.**
+  - [x] **22D — Structure and docs.** Split the VM path into
+    `lib/sparknet-openshell-backend.py`; move the image recipe to
+    `scripts/sparknet-opencode-runtime.sh`; trim ADR 0012 to a decision record;
+    add `lib/` to the role inventory. **Status 2026-11-10 — COMPLETE.**
+  - [x] **22E — Tests.** Contract truth/driver/UID/ports assertions; VM policy
+    and mount tests; migration failure; owner mismatch; fake CLI lifecycle;
+    renderer test; Dockerfile/script asset test. **Status 2026-11-10 —
+    COMPLETE.** Peer suite 646 passed/1 skipped.
+  - [~] **22F — Gates, commit and republish.** Commit the peer role first, then
+    the root with the updated pin and contracts; run the gates. The signed
+    `goagx` republish is `DoD: confirm: user`: the operational key is on the
+    Master, not this host.
+  - **Status 2026-11-10 — code and gates complete.** `make test-all`, peer
+    suite, contract/render/context/validate/lint/format/shellcheck, SBOM,
+    bundle build and bundle verification are green. No peer live claim. The
+    goagx republish remains with the Master key holder.
+
 ## Next
 
 `current:` moves one step at a time, and only after the DoD is verified.

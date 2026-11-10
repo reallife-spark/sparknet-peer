@@ -48,4 +48,14 @@ def relocated_vault(tmp_path: Path) -> Path:
         dest,
         ignore=shutil.ignore_patterns(".git", ".venv", ".state", ".cache", "__pycache__", "node_modules"),
     )
+    # A role bundle carries shared/ and contracts/ beside the role directory.
+    # Relocated services resolve the one loader and the contract UID bounds there.
+    for sibling in ("shared", "contracts"):
+        source = VAULT_ROOT.parent / sibling
+        if source.is_dir() and not (dest.parent / sibling).exists():
+            shutil.copytree(
+                source,
+                dest.parent / sibling,
+                ignore=shutil.ignore_patterns("__pycache__", ".git"),
+            )
     return dest

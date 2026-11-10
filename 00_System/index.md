@@ -26,6 +26,10 @@ Links on this page are wikilinks so they resolve whether the page is opened as
 | `06_Projects/` | per-project knowledge |
 | `07_Archives/` | snapshots and superseded material |
 
+Role trees outside the vault: `manifests/`, `scripts/`, `services/`, `lib/`,
+`systemd/`, `configs/`, `blockchain/`, `agents/`, `deployment/`, `docs/`,
+`plans/`, `tests/`. They take no tracking blocks.
+
 ## Commands
 
 | Command | Does |

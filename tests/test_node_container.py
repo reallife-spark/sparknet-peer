@@ -203,11 +203,11 @@ def test_compose_image_tracks_the_pinned_opencode_version():
     ), "the compose image and the Dockerfile pin must agree"
 
 
-def test_runtime_asset_name_matches_the_makefile():
-    makefile = (ROLE_ROOT / "Makefile").read_text()
+def test_runtime_asset_name_matches_the_build_script():
+    script = (ROLE_ROOT / "scripts" / "sparknet-opencode-runtime.sh").read_text()
     runtime = (ROLE_ROOT / "configs" / "opencode-runtime" / "Dockerfile").read_text()
-    assert "targetarch=amd64" in makefile and "targetarch=arm64" in makefile
-    assert "opencode-linux-$$targetarch.tar.gz" in makefile
+    assert "targetarch=amd64" in script and "targetarch=arm64" in script
+    assert "opencode-linux-${targetarch}.tar.gz" in script
     assert "COPY opencode-linux-${TARGETARCH}.tar.gz" in runtime
 
 

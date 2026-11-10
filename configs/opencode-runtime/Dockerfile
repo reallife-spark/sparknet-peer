@@ -38,7 +38,7 @@ ENV HOME=/home/opencode \
     XDG_DATA_HOME=/home/opencode/.local/share \
     XDG_CACHE_HOME=/home/opencode/.cache
 
-WORKDIR /work
+WORKDIR /sandbox
 
 # The engine overrides the entrypoint to start the Unix-socket bridge and
 # OpenCode; the image default is still useful for a manual smoke test.

@@ -1,0 +1,33 @@
+# Sparknet peer OpenShell gateway — microVM template.
+#
+# Rendered by scripts/sparknet-openshell-config.py from manifests/openshell.json.
+# Do not copy this file directly: the placeholders carry the owner identity and
+# the digest-pinned images.
+
+[openshell]
+version = 2
+
+[openshell.gateway]
+name = "@GATEWAY_NAME@"
+bind_address = "127.0.0.1:17670"
+compute_driver = "vm"
+guest_tls_ca = "@OWNER_HOME@/.local/state/openshell/tls/ca.crt"
+
+[openshell.gateway.auth]
+allow_unauthenticated_users = false
+
+[openshell.drivers.vm]
+default_image = "@DEFAULT_IMAGE@"
+bootstrap_image = "@BOOTSTRAP_IMAGE@"
+grpc_endpoint = "https://127.0.0.1:17670"
+state_dir = "@OWNER_HOME@/.local/state/openshell/vm"
+vcpus = 2
+mem_mib = 2048
+overlay_disk_mib = 2048
+sandbox_uid = @OWNER_UID@
+sandbox_gid = @OWNER_GID@
+allow_driver_config = true
+enable_bind_mounts = true
+
+[openshell.drivers.vm.resource_admission]
+enabled = false

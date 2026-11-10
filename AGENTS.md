@@ -105,7 +105,7 @@ Vault content lives in `00_System/`–`07_Archives/`. Legacy names
 two names. `_staging/` is the skill review queue, not vault content. The
 identity files and `CONTEXT.md` stay at the role root.
 
-Role trees: `manifests/`, `scripts/`, `services/`, `systemd/`, `configs/`,
+Role trees: `manifests/`, `scripts/`, `services/`, `lib/`, `systemd/`, `configs/`,
 `blockchain/`, `agents/`, `deployment/`, `docs/`, `plans/`, `tests/`. They are not vault
 content and take no tracking blocks. A full inventory is in
 `00_System/index.md` and `USER_MANUAL.md`.

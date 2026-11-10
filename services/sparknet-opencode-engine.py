@@ -53,6 +53,7 @@ import secrets
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -62,6 +63,21 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+if str(_SHARED) not in sys.path:
+    sys.path.insert(0, str(_SHARED))
+
+from sparknet_loader import load_by_path  # noqa: E402 - pinned shared loader
+
+_PROFILE = load_by_path(
+    "sparknet-sandbox-profile",
+    Path(__file__).resolve().parent.parent / "lib" / "sparknet-sandbox-profile.py",
+)
+_BACKEND = load_by_path(
+    "sparknet-openshell-backend",
+    Path(__file__).resolve().parent.parent / "lib" / "sparknet-openshell-backend.py",
+)
 
 try:  # Python 3.9+
     from collections.abc import Iterator
@@ -73,6 +89,7 @@ DEFAULT_PORT_BASE = 4300
 DEFAULT_NETWORK_PREFIX = "sparknet-opencode"
 DEFAULT_SUBNET_BASE = "172.30"
 DEFAULT_PROXY_PORT = 11500
+DEFAULT_FORWARD_BASE = 14200
 DEFAULT_SOCKET_ROOT = "/run/sparknet-opencode"
 SANDBOX_UID = int(os.environ.get("SPARKNET_OPENCODE_SANDBOX_UID", "10001"))
 SANDBOX_GID = int(os.environ.get("SPARKNET_OPENCODE_SANDBOX_GID", "10001"))
@@ -339,7 +356,16 @@ class ProxyThread:
 
 class Sandbox:
     def __init__(
-        self, user: str, container: str, socket_path: Path, vault: Path, proxy_url: str, password: str = ""
+        self,
+        user: str,
+        container: str,
+        socket_path: Path,
+        vault: Path,
+        proxy_url: str,
+        password: str = "",
+        *,
+        base_url: str | None = None,
+        forward: Any = None,
     ) -> None:
         self.user = user
         self.container = container
@@ -347,7 +373,8 @@ class Sandbox:
         self.vault = vault
         self.proxy_url = proxy_url
         self.password = password
-        self.base_url = f"unix://{socket_path}"
+        self.base_url = base_url or f"unix://{socket_path}"
+        self.forward = forward
 
 
 class SandboxManager:
@@ -358,6 +385,19 @@ class SandboxManager:
         self.state_root = Path(args.state_root).resolve()
         self.image = args.image
         self.docker = args.docker
+        self.sandbox_backend = getattr(args, "sandbox_backend", "docker")
+        self.openshell = getattr(args, "openshell", "openshell")
+        self.openshell_user = getattr(args, "openshell_user", "")
+        owner_file = getattr(args, "openshell_owner_file", "")
+        self.openshell_owner_file = Path(owner_file).expanduser() if owner_file else None
+        self.vm_image = getattr(args, "vm_image", "sparknet-opencode-runtime-vm:2.2.5")
+        self.forward_base = int(getattr(args, "forward_base", DEFAULT_FORWARD_BASE))
+        self.sandbox_uid, self.sandbox_gid = self._resolve_sandbox_identity()
+        self.openshell_backend = (
+            _BACKEND.OpenShellBackend(self, _PROFILE, EngineError, ProxyThread)
+            if self.sandbox_backend == "openshell"
+            else None
+        )
         self.port_base = int(args.port_base)
         self.proxy_port = int(args.proxy_port)
         self.model_upstream = args.model_upstream
@@ -379,6 +419,30 @@ class SandboxManager:
             os.chmod(self.state_root, 0o700)
         except OSError:
             pass
+
+    def _resolve_sandbox_identity(self) -> tuple[int, int]:
+        """The numeric identity the sandbox runs as.
+
+        The owner identity is only adopted when it is configured. Until then the
+        legacy synthetic UID keeps an existing deployment working. The OpenShell
+        backend refuses to start without an owner: a synthetic UID is not the
+        user's permissions, and silently falling back would write files the user
+        cannot edit.
+        """
+        configured = any(
+            os.environ.get(name) for name in ("SPARKNET_OWNER_UID", "SPARKNET_OWNER_GID", "SPARKNET_OWNER_USER")
+        )
+        if not configured:
+            if self.sandbox_backend == "openshell":
+                raise SystemExit(
+                    "OpenShell backend requires SPARKNET_OWNER_UID/GID or SPARKNET_OWNER_USER; "
+                    "the synthetic 10001 identity is not the user"
+                )
+            return _PROFILE.legacy_identity()
+        try:
+            return _PROFILE.resolve_owner_identity()
+        except _PROFILE.ProfileError as exc:
+            raise SystemExit(f"invalid sandbox owner identity: {exc}") from exc
 
     # -- paths ---------------------------------------------------------------
     def vault_for(self, user: str) -> Path:
@@ -405,22 +469,10 @@ class SandboxManager:
     def _own_path(self, path: Path, recursive: bool = False) -> None:
         if os.geteuid() != 0:
             return
-        # Never follow a sandbox-created symlink: chowning /etc/shadow through a
-        # symlink in the vault would hand the sandbox a host file it did not own.
-        if path.is_symlink():
-            return
         try:
-            os.chown(path, SANDBOX_UID, SANDBOX_GID, follow_symlinks=False)
-            if recursive and path.is_dir():
-                for child in path.rglob("*"):
-                    if child.is_symlink():
-                        continue
-                    try:
-                        os.chown(child, SANDBOX_UID, SANDBOX_GID, follow_symlinks=False)
-                    except OSError:
-                        pass
-        except OSError:
-            pass
+            _PROFILE.chown_no_follow(path, self.sandbox_uid, self.sandbox_gid, recursive=recursive)
+        except _PROFILE.ProfileError as exc:
+            raise EngineError(500, f"cannot own {path}: {exc}") from exc
 
     def user_state(self, user: str) -> Path:
         path = self.state_root / "users" / user
@@ -458,11 +510,27 @@ class SandboxManager:
     def _own_vault(self, user: str, vault: Path) -> None:
         if user in self._owned_vaults:
             return
+        marker = self.state_root / "users" / user / "identity.json"
+        if (self.sandbox_uid, self.sandbox_gid) != _PROFILE.legacy_identity():
+            try:
+                _PROFILE.migrate_ownership(
+                    [vault, self.state_root / "users" / user],
+                    self.sandbox_uid,
+                    self.sandbox_gid,
+                    marker,
+                )
+            except (OSError, _PROFILE.ProfileError) as exc:
+                raise EngineError(500, f"cannot migrate vault ownership: {exc}") from exc
         self._own_path(vault, recursive=True)
         self._owned_vaults.add(user)
 
     def container_name(self, user: str) -> str:
         return f"{DEFAULT_NETWORK_PREFIX}-{user}"
+
+    def openshell_name(self, user: str) -> str:
+        """A stable OpenShell sandbox name within the 19-character limit."""
+        digest = hashlib.sha256(user.encode("utf-8")).hexdigest()[:12]
+        return f"spk-{digest}"
 
     def password_for(self, user: str) -> str:
         """A per-sandbox server password, kept in the 0700 engine state dir.
@@ -542,9 +610,11 @@ class SandboxManager:
                 self.proxies[gateway] = proxy
         return f"http://{gateway}:{self.proxy_port}/v1"
 
-    def _config_for(self, user: str, proxy_url: str) -> Path:
+    def _config_for(self, user: str, proxy_url: str, *, directory: Path | None = None) -> Path:
         state = self.user_state(user)
-        path = state / "opencode.json"
+        base = Path(directory) if directory is not None else state
+        base.mkdir(parents=True, exist_ok=True)
+        path = base / "opencode.json"
         try:
             template = self.config_template.read_text(encoding="utf-8")
         except OSError as exc:
@@ -555,7 +625,7 @@ class SandboxManager:
             .replace("${SMALL_MODEL_ID}", self.small_model_id)
         )
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        stamp = state / "opencode.json.sha256"
+        stamp = base / "opencode.json.sha256"
         old = stamp.read_text(encoding="utf-8").strip() if stamp.exists() else ""
         if old != digest:
             path.write_text(content, encoding="utf-8")
@@ -581,6 +651,9 @@ class SandboxManager:
         raise EngineError(503, f"sandbox did not become healthy: {last}")
 
     def ensure(self, user: str) -> Sandbox:
+        if self.sandbox_backend == "openshell":
+            assert self.openshell_backend is not None
+            return self.openshell_backend.ensure(user)
         vault = self.vault_for(user)
         self._own_vault(user, vault)
         row = self.ensure_network(user)
@@ -616,7 +689,7 @@ class SandboxManager:
                 self._network_name(user),
                 "--read-only",
                 "--user",
-                f"{SANDBOX_UID}:{SANDBOX_GID}",
+                f"{self.sandbox_uid}:{self.sandbox_gid}",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=256m",
                 "--tmpfs",
@@ -661,8 +734,12 @@ class SandboxManager:
                 "sh",
                 self.image,
                 "-c",
-                "python3 /opt/sparknet/unix-proxy.py /run/sparknet-runtime/opencode.sock 127.0.0.1 4200 & "
-                "exec opencode serve --hostname 127.0.0.1 --port 4200",
+                (
+                    "cd /work; python3 /opt/sparknet/unix-proxy.py "
+                    "/run/sparknet-runtime/opencode.sock 127.0.0.1 "
+                    f"{_PROFILE.OPENCODE_PORT} & "
+                    f"exec opencode serve --hostname 127.0.0.1 --port {_PROFILE.OPENCODE_PORT}"
+                ),
             ]
             rc, _out, err = self._run(args, timeout=120)
             if rc != 0:
@@ -679,9 +756,41 @@ class SandboxManager:
         self.last_used[user] = time.time()
 
     def stop(self, user: str) -> None:
+        if self.sandbox_backend == "openshell":
+            assert self.openshell_backend is not None
+            self.openshell_backend.stop(user)
+            return
         name = self.container_name(user)
         self._run(["stop", name], timeout=60)
         self.last_used.pop(user, None)
+
+    def close(self) -> None:
+        if self.openshell_backend is not None:
+            self.openshell_backend.close()
+        for proxy in self.proxies.values():
+            proxy.stop()
+        self.proxies.clear()
+
+    def _make_sandbox(
+        self,
+        user: str,
+        name: str,
+        vault: Path,
+        proxy_url: str,
+        password: str,
+        base_url: str,
+        forward: Any,
+    ) -> Sandbox:
+        return Sandbox(
+            user,
+            name,
+            Path(),
+            vault,
+            proxy_url,
+            password,
+            base_url=base_url,
+            forward=forward,
+        )
 
     def prune_idle(self) -> int:
         if self.idle_seconds <= 0:
@@ -860,6 +969,7 @@ class Engine:
 
     def close(self) -> None:
         self.prune_stop.set()
+        self.sandbox.close()
 
     def _session_key(self, user: str, chat_id: str, agent: str) -> str:
         return "{}:{}:{}".format(user, chat_id or "api", agent)
@@ -1384,6 +1494,28 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--token-file", default=os.environ.get("SPARKNET_OPENCODE_ENGINE_TOKEN_FILE", ""))
     p.add_argument("--token", default=os.environ.get("SPARKNET_OPENCODE_ENGINE_TOKEN", ""))
     p.add_argument("--image", default=os.environ.get("SPARKNET_OPENCODE_IMAGE", "sparknet-opencode-runtime:2.2.5"))
+    p.add_argument(
+        "--sandbox-backend",
+        choices=("docker", "openshell"),
+        default=os.environ.get("SPARKNET_OPENCODE_SANDBOX_BACKEND", "docker"),
+        help="Sandbox runtime. Docker is the rollback default until the OpenShell live leg is confirmed.",
+    )
+    p.add_argument("--openshell", default=os.environ.get("SPARKNET_OPENSHELL_CLI", "openshell"))
+    p.add_argument("--openshell-user", default=os.environ.get("SPARKNET_OWNER_USER", ""))
+    p.add_argument(
+        "--openshell-owner-file",
+        default=os.environ.get("SPARKNET_OPENSHELL_OWNER_FILE", ""),
+        help="Renderer-written owner.json; defaults to <owner home>/.config/openshell/owner.json",
+    )
+    p.add_argument(
+        "--vm-image",
+        default=os.environ.get("SPARKNET_OPENCODE_VM_IMAGE", "sparknet-opencode-runtime-vm:2.2.5"),
+    )
+    p.add_argument(
+        "--forward-base",
+        type=int,
+        default=int(os.environ.get("SPARKNET_OPENCODE_FORWARD_BASE", str(DEFAULT_FORWARD_BASE))),
+    )
     default_docker = "/usr/bin/docker" if os.geteuid() == 0 else os.environ.get("SPARKNET_DOCKER", "docker")
     p.add_argument("--docker", default=default_docker)
     p.add_argument(

@@ -1,0 +1,37 @@
+# Sparknet peer OpenShell gateway.
+#
+# This file is the peer's gateway SSOT. It is installed at
+# ~/.config/openshell/gateway.toml and read by the owner's user service.
+# The gateway runs as the node owner, not root: it needs the Docker socket
+# (owner is in the docker group), and user auth is the package-managed local
+# mTLS bundle. Never set allow_unauthenticated_users on a shared host.
+
+[openshell]
+version = 2
+
+[openshell.gateway]
+name = "sparknet-peer"
+bind_address = "127.0.0.1:17670"
+compute_driver = "docker"
+
+# Package-managed local mTLS is the user-auth boundary. The CLI/SDK presents
+# ~/.config/openshell/gateways/<name>/mtls/tls.crt; supervisors use the CA and
+# sandbox bearer tokens. A plaintext unauthenticated gateway would let any
+# local process create a rootful-Docker sandbox, so it is explicitly off.
+[openshell.gateway.auth]
+allow_unauthenticated_users = false
+
+[openshell.drivers.docker]
+socket_path = "/var/run/docker.sock"
+# Bind mounts are the peer's one-vault boundary. Driver config is required to
+# pass the per-sandbox mount; resource admission is disabled because the peer
+# creates the bind source itself.
+allow_driver_config = true
+enable_bind_mounts = true
+
+[openshell.drivers.docker.resource_admission]
+enabled = false
+
+# The local package generates the gateway TLS and JWT signing bundle. Do not
+# add gateway_jwt paths here unless the package layout changes; explicit paths
+# take precedence over package discovery and are easy to get wrong.

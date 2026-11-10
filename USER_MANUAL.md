@@ -107,6 +107,7 @@ generated operating context; `contracts/knowledge-flow.md` is the channel map;
 | Path | What it is |
 |---|---|
 | `services/` | The peer services, including the RFI request client. Each is a single-file, `#!/usr/bin/env python3` program with a `--help`. |
+| `lib/` | Role libraries loaded by path through `shared/sparknet_loader.py`; not services and no `--help`. |
 | `scripts/` | The 23 operational scripts: identity, keys, overlay, firewall, lockdown, sync, provisioning, the run helper. |
 | `systemd/` | Twelve services and four timers. A unit contains **no vault path** — it calls a generated shim. |
 | `manifests/` | The node's declared identity, capabilities, protected paths, policies and templates. |
