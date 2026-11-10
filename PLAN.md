@@ -218,8 +218,10 @@ current: 19
     `docs/agents/triage-labels.md`, `GLOSSARY.md`, `docs/adr/` and
     `.scratch/issues/`.
   - [x] **19C — Pusher.** `services/sparknet-issue-push.py` reads local issues,
-    redacts, signs through `shared/sparknet-http.py` and posts to the Master
-    `/api/v1/issues` under the `issue-report` capability.
+    uses the shared issue module for parse/validation/redaction, signs through
+    `shared/sparknet-http.py` and posts to the Master `/api/v1/issues` under the
+    `issue-report` capability. Fabric 93B moved the shared policy behind
+    `shared/sparknet-issue.py`.
   - [x] **19D — Console.** The shared Understand and Issues tabs render for the
     peer role with the peer config.
   - **DoD**: `make -C peer-node test`, `make contract-test`, `make context-check`,

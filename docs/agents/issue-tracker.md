@@ -25,9 +25,10 @@ A peer pushes its local issues to the Master with:
 python3 services/sparknet-issue-push.py --root . --once
 ```
 
-The pusher reads `.scratch/issues/`, refuses a secret-shaped or over-long body,
-signs the request with the node key through `shared/sparknet-http.py`, and sends
-`POST /api/v1/issues` to the Master's 8090 intake. The Master requires the
+The pusher reads `.scratch/issues/` through the shared issue module, validates
+the local frontmatter and `body_sha256`, refuses a secret-shaped or over-long
+body, signs the request with the node key through `shared/sparknet-http.py`, and
+sends `POST /api/v1/issues` to the Master's 8090 intake. The Master requires the
 peer-held `issue-report` capability and a registered, non-revoked overlay
 address.
 

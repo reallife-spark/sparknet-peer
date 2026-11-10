@@ -3,18 +3,13 @@
 
 The issue tracker is local markdown under ``.scratch/issues/``
 (``contracts/issue-schema.json``). This service is the peer half of the signed
-``POST /api/v1/issues`` route: it redacts, signs with the node key through
+``POST /api/v1/issues`` route: it prepares, signs with the node key through
 ``shared/sparknet-http.py`` and sends. The Master verifies the signature, the
 registered overlay source and the peer-held ``issue-report`` capability, then
 records the item.
 
 An issue is operational work. It is never installed into the vault, never served
 as knowledge and never becomes authority.
-
-Usage::
-
-    sparknet-issue-push.py --once
-    sparknet-issue-push.py --once --dry-run --json
 """
 
 from __future__ import annotations
@@ -22,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -41,18 +35,6 @@ ROLE_ROOT = SERVICE_DIR.parent
 FABRIC_ROOT = ROLE_ROOT.parent
 DEFAULT_ENDPOINT = "http://10.100.0.1:8090"
 ISSUE_PATH = "/api/v1/issues"
-
-SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)\b(api[_-]?key|token|password|passwd|secret|private[_-]?key)\b\s*[:=]\s*[A-Za-z0-9_./+=~-]{12,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
-)
-
-
-class Refusal(RuntimeError):
-    """A local refusal; the issue is not sent."""
 
 
 def _load(name: str, path: Path) -> Any:
@@ -74,8 +56,51 @@ def load_http() -> Any:
     return _load("sparknet_issue_http", shared_dir() / "sparknet-http.py")
 
 
-def load_yaml() -> Any:
-    return _load("sparknet_issue_yaml", shared_dir() / "sparknet-yaml.py")
+def load_issue() -> Any:
+    module = _load("sparknet_issue_push_module", shared_dir() / "sparknet-issue.py")
+    if module is None:
+        raise SystemExit("issue-push: shared/sparknet-issue.py is missing")
+    return module
+
+
+class Refusal(RuntimeError):
+    """A local refusal; the issue is not sent."""
+
+
+def _issue() -> Any:
+    return load_issue()
+
+
+# Compatibility names used by the peer tests and any older caller. The one
+# implementation is in shared/sparknet_issue; these adapters do not restate it.
+def split_issue(text: str) -> tuple[dict[str, Any], str]:
+    return _issue().split_issue(text)
+
+
+def redact(meta: dict[str, Any], body: str) -> None:
+    return _issue().redact(meta, body)
+
+
+def build_payload(
+    meta: dict[str, Any],
+    body: str,
+    *,
+    authz: Any,
+    node: str,
+    fingerprint: str,
+) -> dict[str, Any]:
+    return _issue().build_payload(meta, body, authz=authz, node=node, fingerprint=fingerprint)
+
+
+def issue_files(root: Path) -> list[Path]:
+    return _issue().issue_files(root)
+
+
+try:
+    # Keep the historical refusal name while the one exception lives in shared/.
+    Refusal = _issue().IssueError
+except SystemExit:
+    pass
 
 
 def state_dir() -> Path:
@@ -123,58 +148,6 @@ def private_key(authz: Any) -> Any:
         raise SystemExit(f"issue-push: cannot load node key {path}: {exc}") from exc
 
 
-def split_issue(text: str) -> tuple[dict[str, Any], str]:
-    if not text.startswith("---"):
-        raise Refusal("missing frontmatter")
-    end = text.find("\n---", 3)
-    if end < 0:
-        raise Refusal("unterminated frontmatter")
-    yaml = load_yaml()
-    if yaml is None:
-        raise Refusal("shared/sparknet-yaml.py is missing")
-    try:
-        meta = yaml.parse_yaml_subset(text[3:end])
-    except Exception as exc:  # noqa: BLE001 - a bad frontmatter is a local refusal
-        raise Refusal(f"frontmatter: {exc}") from exc
-    if not isinstance(meta, dict):
-        raise Refusal("frontmatter is not a mapping")
-    return meta, text[end + 4 :].lstrip("\n")
-
-
-def redact(meta: dict[str, Any], body: str) -> None:
-    for pattern in SECRET_PATTERNS:
-        if pattern.search(body) or pattern.search(str(meta.get("title") or "")):
-            raise Refusal("secret-shaped content")
-        for link in meta.get("links") or []:
-            if isinstance(link, dict) and pattern.search(str(link.get("ref") or "")):
-                raise Refusal("secret-shaped link")
-
-
-def issue_files(root: Path) -> list[Path]:
-    directory = root / ".scratch" / "issues"
-    return sorted(directory.glob("*.md")) if directory.is_dir() else []
-
-
-def build_payload(meta: dict[str, Any], body: str, *, authz: Any, node: str, fingerprint: str) -> dict[str, Any]:
-    if meta.get("schema") != authz.ISSUE_SCHEMA:
-        raise Refusal(f"schema must be {authz.ISSUE_SCHEMA}")
-    issue_id = str(meta.get("id") or "")
-    labels = [str(label) for label in (meta.get("labels") or []) if str(label) in authz.ISSUE_LABELS]
-    links = [item for item in (meta.get("links") or []) if isinstance(item, dict)]
-    return authz.build_issue_report(
-        issue_id=issue_id,
-        node_id=node,
-        peer_fingerprint=fingerprint,
-        title=str(meta.get("title") or ""),
-        body=body,
-        status=str(meta.get("status") or "open"),
-        labels=labels,
-        links=links,
-        source=str(meta.get("source") or "."),
-        updated_at=str(meta.get("updated_at") or "") or None,
-    )
-
-
 def load_state(path: Path) -> dict[str, str]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -195,6 +168,7 @@ def push(root: Path, endpoint: str, *, dry_run: bool, as_json: bool) -> int:
     http = load_http()
     if authz is None or http is None:
         raise SystemExit("issue-push: shared/authz or shared/http is missing")
+    module = load_issue()
     node = node_id()
     fp = authz.fingerprint(identity())
     key = None if dry_run else private_key(authz)
@@ -202,15 +176,19 @@ def push(root: Path, endpoint: str, *, dry_run: bool, as_json: bool) -> int:
     state = load_state(state_path)
     sent = skipped = refused = 0
     results: list[dict[str, Any]] = []
-    for path in issue_files(root):
+    for path in module.issue_files(root):
         rel = path.relative_to(root).as_posix()
         try:
-            meta, body = split_issue(path.read_text(encoding="utf-8", errors="replace"))
-            redact(meta, body)
-            payload = build_payload(meta, body, authz=authz, node=node, fingerprint=fp)
-        except Refusal as exc:
+            payload = module.prepare_payload(
+                path.read_text(encoding="utf-8", errors="replace"),
+                path=path,
+                node=node,
+                fingerprint=fp,
+                authz=authz,
+            )
+        except module.IssueError as exc:
             refused += 1
-            results.append({"file": rel, "status": "refused", "reason": str(exc)})
+            results.append({"file": rel, "status": "refused", "reason": exc.reason})
             print(f"issue-push: refused {rel}: {exc}", file=sys.stderr)
             continue
         issue_id = str(payload["issue_id"])

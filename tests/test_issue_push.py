@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import ModuleType
@@ -37,6 +38,7 @@ def _write_issue(root: Path, *, body: str = "The console returns 401.", title: s
     issues = root / ".scratch" / "issues"
     issues.mkdir(parents=True)
     path = issues / "fix-console-token.md"
+    body_digest = hashlib.sha256((body + "\n").encode()).hexdigest()
     path.write_text(
         "---\n"
         "schema: sparknet-issue/1\n"
@@ -48,7 +50,7 @@ def _write_issue(root: Path, *, body: str = "The console returns 401.", title: s
         "created_at: 2026-11-09T10:00:00Z\n"
         "updated_at: 2026-11-09T10:00:00Z\n"
         "source: .\n"
-        "body_sha256: ignored\n"
+        f"body_sha256: {body_digest}\n"
         "---\n" + body + "\n",
         encoding="utf-8",
     )
