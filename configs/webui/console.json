@@ -9,7 +9,8 @@
     "learning",
     "memory",
     "projects",
-    "understand"
+    "understand",
+    "evals"
   ],
   "bind": "127.0.0.1",
   "port": 8099,
