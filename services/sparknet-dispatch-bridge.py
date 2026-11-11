@@ -64,7 +64,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+FABRIC_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(FABRIC_ROOT / "shared"))
 try:
     from sparknet_loader import load_by_path, load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
@@ -429,6 +430,11 @@ class Bridge:
             ("sparknet-authz.py", "sparknet-nocturnal.py"),
         )
         self.reflex = _load_shared("sparknet-reflex", "sparknet_reflex_bridge", ("sparknet-reflex.py",))
+        self.skill_eval = _load_shared(
+            "sparknet-skill-eval",
+            "sparknet_skill_eval_bridge",
+            ("sparknet-skill-eval.py",),
+        )
         self._registry: dict[str, Any] | None = None
         self._registry_stamp: tuple[int, int] | None = None
         self._identity: dict[str, Any] | None = None
@@ -627,7 +633,46 @@ class Bridge:
             raise RuntimeError("local model returned no response")
         return output
 
+    def _cluster_skill_eval(self, subtask: dict[str, Any]) -> str:
+        """Run the deterministic review harness for one allow-listed fixture.
+
+        No shell and no caller-chosen path: the ref is `fixture:<stem>` and the
+        file must resolve under scripts/skill-evals/fixtures/. The returned
+        output is the validated `sparknet-skill-eval/1` record.
+        """
+        refs = subtask.get("context_refs") or []
+        if not isinstance(refs, list) or len(refs) != 1 or not str(refs[0]).startswith("fixture:"):
+            raise RuntimeError("skill-eval needs exactly one fixture:<name> context ref")
+        name = str(refs[0])[len("fixture:") :]
+        if not name or "/" in name or "\\" in name or ".." in name:
+            raise RuntimeError(f"invalid fixture name: {name!r}")
+        fixture = FABRIC_ROOT / "scripts" / "skill-evals" / "fixtures" / f"{name}.diff"
+        script = FABRIC_ROOT / "scripts" / "sparknet-skill-eval.py"
+        if not fixture.is_file() or not script.is_file():
+            raise RuntimeError(f"skill-eval fixture not found: {name}")
+        completed = subprocess.run(
+            [sys.executable, str(script), "--candidate", str(fixture), "--subject-ref", f"fixture:{name}"],
+            cwd=str(FABRIC_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")},
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip() or "no output"
+            raise RuntimeError(f"skill-eval failed: {detail}")
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"skill-eval returned non-JSON output: {exc}") from exc
+        record = payload.get("record") if isinstance(payload, dict) else None
+        self.skill_eval.validate_record(record)
+        return json.dumps(record, sort_keys=True, indent=2)
+
     def _cluster_run_subtask(self, subtask: dict[str, Any]) -> str:
+        if subtask.get("mode") == "skill-eval":
+            return self._cluster_skill_eval(subtask)
         if self._cluster_executor is not None:
             return self._cluster_executor(subtask)
         return self._cluster_ollama(subtask)
@@ -647,7 +692,8 @@ class Bridge:
             record["updated_at"] = self._now().isoformat().replace("+00:00", "Z")
             return
         private_key_b64 = key_path.read_text(encoding="utf-8").strip()
-        model = self._cluster_model()
+        modes = {str(item.get("mode") or "model") for item in assigned}
+        model = "skill-eval-rules/1" if modes == {"skill-eval"} else self._cluster_model()
         results: list[dict[str, Any]] = []
         for subtask in assigned:
             started = self._now()

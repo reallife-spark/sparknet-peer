@@ -883,3 +883,57 @@ def test_step89_routes_proxy_to_the_memory_gateway(tmp_path: Path) -> None:
     ]
     status, payload = bridge.handle("GET", "/v1/events/status", {}, {}, grant)
     assert status == 200 and payload["read_only"] is True
+
+
+def test_cluster_skill_eval_subtask_returns_a_valid_record(server, ctx):
+    """A skill-eval subtask runs the deterministic harness, not the model."""
+    node_pub = _cluster_registry(ctx)
+    server.bridge._cluster_execute_enabled = True
+    server.bridge._cluster_artifact_git_dir = str(ctx["state"] / "nocturnal.git")
+    job = _cluster_job(ctx)
+    job["job_id"] = "job-cluster-eval"
+    job["subtasks"] = [
+        {
+            "node_id": ctx["identity"]["node_id"],
+            "subtask_id": "subtask-eval",
+            "instruction": "evaluate the fixture candidate",
+            "context_refs": ["fixture:defect-shell-true"],
+            "mode": "skill-eval",
+        }
+    ]
+    job["signature_b64"] = authz.sign_bytes(ctx["master_key"], authz.cluster_job_message(job))
+    status, payload = server.request("POST", "/v1/cluster/submit", {"job": job, "lease_id": "lease-test"})
+    assert status == 200, payload
+    assert payload["status"] == "completed", payload
+    status, result = server.request("GET", "/v1/cluster/result/job-cluster-eval")
+    assert status == 200, result
+    partial = result["result"]["results"][0]
+    assert partial["model"] == "skill-eval-rules/1"
+    record = json.loads(partial["output"])
+    assert record["verdict"] == "fail"
+    assert record["subject"]["ref"] == "fixture:defect-shell-true"
+    assert server.bridge.skill_eval.validate_record(record) == record
+    assert nocturnal.verify_result(partial, node_pub)
+
+
+def test_cluster_skill_eval_refuses_a_path_like_fixture(server, ctx):
+    _cluster_registry(ctx)
+    server.bridge._cluster_execute_enabled = True
+    job = _cluster_job(ctx)
+    job["job_id"] = "job-cluster-eval-bad"
+    job["subtasks"] = [
+        {
+            "node_id": ctx["identity"]["node_id"],
+            "subtask_id": "subtask-eval",
+            "instruction": "evaluate",
+            "context_refs": ["fixture:../../etc/passwd"],
+            "mode": "skill-eval",
+        }
+    ]
+    job["signature_b64"] = authz.sign_bytes(ctx["master_key"], authz.cluster_job_message(job))
+    status, payload = server.request("POST", "/v1/cluster/submit", {"job": job, "lease_id": "lease-test"})
+    assert status == 200, payload
+    assert payload["status"] == "failed"
+    status, record = server.request("GET", "/v1/cluster/status/job-cluster-eval-bad")
+    assert status == 200, record
+    assert "fixture" in str(record.get("error") or "").lower()
