@@ -256,7 +256,7 @@ current: done
     **Status 2026-11-10 — COMPLETE.** `sandbox-supervise` is in the shared
     vocabulary and both definitions; the `sandbox-request` envelope is pinned
     with a byte vector; `make contract-test`, `make render-check`,
-    `tests/test_contracts.py` and `tests/test_envelopes.py` are green. No live
+    `tests/contracts/` and `tests/test_envelopes.py` are green. No live
     grant is claimed.
   - [~] **20B — Gateway service.** Use the package-managed
     `openshell-gateway.service` (owner user service with linger, local mTLS,

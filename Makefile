@@ -152,8 +152,8 @@ guard-status: ## Report the guard's manifest state and authorization posture
 # here could be edited to pass and would then be the thing under test.
 guard-contract: ## Prove this role matches ../contracts (capabilities, ports, overlay)
 	@"$(FABRIC_ROOT)/.venv/bin/python" -m pytest \
-		"$(FABRIC_ROOT)/tests/test_contracts.py" -q \
-		|| "$(PY)" -m pytest "$(FABRIC_ROOT)/tests/test_contracts.py" -q
+		"$(FABRIC_ROOT)/tests/contracts" -q \
+		|| "$(PY)" -m pytest "$(FABRIC_ROOT)/tests/contracts" -q
 
 peer-manifest: ## Print this node's identity and authorization posture
 	@$(PY) -c "import json,pathlib; \

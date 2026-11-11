@@ -66,11 +66,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_by_path, load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
     def load_by_path(name, path, **_kwargs):
         raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 STATES = ["PLAN", "PERMISSION_PENDING", "PERMITTED", "EXECUTING", "COMPLETE", "DENIED", "ERROR"]
@@ -183,36 +186,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _shared_dir() -> Path:
-    """Resolve shared/ from the environment or from the repo layout.
-
-    A standalone bundle ships shared/ next to the role; a full clone has it at
-    the fabric root. Never import by name — there is exactly one copy, loaded by
-    path for the same reason authz is (see shared/README.md).
-    """
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        return Path(env_shared)
-    here = Path(__file__).resolve().parent
-    candidates = [here.parent / "shared", here.parent.parent / "shared"]
-    for cand in candidates:
-        if (cand / "sparknet-http.py").is_file():
-            return cand
-    raise FileNotFoundError(
-        "cannot locate shared/sparknet-http.py; this bridge refuses to reimplement the signed transport"
-    )
-
-
 def _load_shared(name: str, label: str, required: tuple[str, ...]) -> Any:
     """Load one shared/ implementation by path, never by import."""
-    shared = _shared_dir()
-    for dep in required:
-        if not (shared / dep).is_file():
-            raise FileNotFoundError(f"cannot locate shared/{dep}; this bridge refuses to reimplement it")
-    if label in sys.modules:
-        return sys.modules[label]
-    path = shared / f"{name}.py"
-    return load_by_path(label, path, error=FileNotFoundError, message=f"no importable module at {path}")
+    return load_shared(
+        f"{name}.py",
+        label,
+        required=required,
+        error=FileNotFoundError,
+        message=f"no importable module at shared/{name}.py",
+    )
 
 
 def _load_http() -> Any:

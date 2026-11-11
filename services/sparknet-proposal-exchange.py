@@ -32,11 +32,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_by_path, load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
     def load_by_path(name, path, **_kwargs):
         raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 DEFAULT_HERE = Path(__file__).resolve().parent
@@ -62,25 +65,13 @@ def _load_by_path(name: str, path: Path) -> Any:
     return load_by_path(name, path, error=ExchangeError)
 
 
-def _shared_dir() -> Path:
-    """Locate shared/, honouring an env override, then repo/bundle layout.
-
-    The bundle reproduces the repository layout (``<root>/peer-node/`` +
-    ``<root>/shared/``), so ``services/../../shared`` resolves in both a clone and
-    an extracted node.
-    """
-    env = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env:
-        return Path(env)
-    here = Path(__file__).resolve()
-    for candidate in (here.parent.parent.parent / "shared", here.parent.parent / "shared"):
-        if (candidate / "sparknet-proposal.py").is_file():
-            return candidate
-    return here.parent.parent.parent / "shared"
-
-
 def _load_proposal() -> Any:
-    return _load_by_path("sparknet_proposal_exchange_impl", _shared_dir() / "sparknet-proposal.py")
+    return load_shared(
+        "sparknet-proposal.py",
+        "sparknet_proposal_exchange_impl",
+        error=ExchangeError,
+        missing_ok=False,
+    )
 
 
 def _load_regime() -> Any:

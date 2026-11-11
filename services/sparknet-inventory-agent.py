@@ -36,16 +36,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
-    def load_by_path(name, path, **_kwargs):
-        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 SERVICE_DIR = Path(__file__).resolve().parent
 ROLE_ROOT = SERVICE_DIR.parent
-FABRIC_ROOT = ROLE_ROOT.parent
 
 DEFAULT_WEBUI = "http://127.0.0.1:8181"
 DEFAULT_BRIDGE = "http://127.0.0.1:4096"
@@ -92,25 +91,12 @@ def uplift_endpoint() -> str:
     return os.environ.get("SPARKNET_UPLIFT_ENDPOINT", "").strip() or DEFAULT_UPLIFT
 
 
-def _load(name: str, path: Path) -> Any:
-    if not path.is_file():
-        return None
-    return load_by_path(name, path)
-
-
-def shared_dir() -> Path:
-    env = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env:
-        return Path(env)
-    return FABRIC_ROOT / "shared"
-
-
 def load_authz() -> Any:
-    return _load("sparknet_inventory_authz", shared_dir() / "sparknet-authz.py")
+    return load_shared("sparknet-authz.py", "sparknet_inventory_authz", missing_ok=True)
 
 
 def load_http() -> Any:
-    return _load("sparknet_inventory_http", shared_dir() / "sparknet-http.py")
+    return load_shared("sparknet-http.py", "sparknet_inventory_http", missing_ok=True)
 
 
 def point_id(kind: str, object_id: str) -> str:

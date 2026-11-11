@@ -37,11 +37,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_by_path, load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
     def load_by_path(name, path, **_kwargs):
         raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 HERE = Path(__file__).resolve().parent
@@ -67,18 +70,11 @@ def _load_by_path(name: str, path: Path) -> Any:
     return load_by_path(name, path)
 
 
-def _shared_dir() -> Path:
-    explicit = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if explicit:
-        return Path(explicit)
-    for candidate in (HERE.parent / "shared", HERE.parent.parent / "shared"):
-        if (candidate / "sparknet-http.py").is_file():
-            return candidate
-    return HERE.parent.parent / "shared"
-
-
 def _load_http() -> Any:
-    return _load_by_path("sparknet_http_share_serve", _shared_dir() / "sparknet-http.py")
+    try:
+        return load_shared("sparknet-http.py", "sparknet_http_share_serve")
+    except FileNotFoundError as exc:
+        raise ShareServeError(500, "missing-implementation", str(exc)) from exc
 
 
 def _load_regime() -> Any:

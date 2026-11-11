@@ -27,37 +27,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
-    def load_by_path(name, path, **_kwargs):
-        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 SERVICE_DIR = Path(__file__).resolve().parent
 DEFAULT_VAULT_ROOT = SERVICE_DIR.parent
-# services/ -> peer-node/ -> fabric root. The shared code is the fabric's, never
-# a peer-local copy (two copies of the acceptance rule could drift).
-DEFAULT_FABRIC_ROOT = DEFAULT_VAULT_ROOT.parent
-
-
-def _load_shared(filename: str, modname: str):
-    """Load a shared module by path, the way the guard does.
-
-    The module load itself is the one shared loader; this wrapper only owns the
-    service-specific search order (`SPARKNET_FABRIC_ROOT` and the fabric root).
-    """
-    import os
-
-    fabric = Path(os.environ.get("SPARKNET_FABRIC_ROOT", "").strip() or DEFAULT_FABRIC_ROOT)
-    candidates = [Path(os.environ.get("SPARKNET_SHARED_DIR", "").strip() or fabric / "shared") / filename]
-    candidates.append(fabric / "shared" / filename)
-    path = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if path is None:
-        raise SystemExit(f"shared module not found: {filename}")
-    if modname in sys.modules:
-        return sys.modules[modname]
-    return load_by_path(modname, path, error=SystemExit)
 
 
 def _vault_root() -> Path:
@@ -108,9 +86,9 @@ def main(argv: list[str] | None = None) -> int:
 
     vault = Path(args.vault_root).resolve() if args.vault_root else _vault_root()
 
-    authz = _load_shared("sparknet-authz.py", "sparknet_authz")
-    schema = _load_shared("sparknet-registry-schema.py", "sparknet_registry_schema")
-    install = _load_shared("sparknet-registry-install.py", "sparknet_registry_install")
+    authz = load_shared("sparknet-authz.py", "sparknet_authz", error=SystemExit)
+    schema = load_shared("sparknet-registry-schema.py", "sparknet_registry_schema", error=SystemExit)
+    install = load_shared("sparknet-registry-install.py", "sparknet_registry_install", error=SystemExit)
 
     if args.status or not args.publication:
         if not args.status and not args.publication:

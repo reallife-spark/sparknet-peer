@@ -23,41 +23,29 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 try:
-    from sparknet_loader import load_by_path  # noqa: E402 - shared/ is added by path above
+    from sparknet_loader import load_shared  # noqa: E402 - shared/ is added by path above
 except ImportError:  # a role copy without shared/ can still answer --help
 
-    def load_by_path(name, path, **_kwargs):
-        raise FileNotFoundError(f"cannot load {path}: shared/sparknet_loader.py is not present")
+    def load_shared(filename, modname, **_kwargs):
+        raise FileNotFoundError(f"cannot load {filename}: shared/sparknet_loader.py is not present")
 
 
 SERVICE_DIR = Path(__file__).resolve().parent
 ROLE_ROOT = SERVICE_DIR.parent
-FABRIC_ROOT = ROLE_ROOT.parent
 DEFAULT_ENDPOINT = "http://10.100.0.1:8090"
 ISSUE_PATH = "/api/v1/issues"
 
 
-def _load(name: str, path: Path) -> Any:
-    if not path.is_file():
-        return None
-    return load_by_path(name, path)
-
-
-def shared_dir() -> Path:
-    env = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    return Path(env) if env else FABRIC_ROOT / "shared"
-
-
 def load_authz() -> Any:
-    return _load("sparknet_issue_authz", shared_dir() / "sparknet-authz.py")
+    return load_shared("sparknet-authz.py", "sparknet_issue_authz", missing_ok=True)
 
 
 def load_http() -> Any:
-    return _load("sparknet_issue_http", shared_dir() / "sparknet-http.py")
+    return load_shared("sparknet-http.py", "sparknet_issue_http", missing_ok=True)
 
 
 def load_issue() -> Any:
-    module = _load("sparknet_issue_push_module", shared_dir() / "sparknet-issue.py")
+    module = load_shared("sparknet-issue.py", "sparknet_issue_push_module", missing_ok=True)
     if module is None:
         raise SystemExit("issue-push: shared/sparknet-issue.py is missing")
     return module

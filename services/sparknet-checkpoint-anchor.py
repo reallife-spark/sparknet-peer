@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -68,21 +67,8 @@ KIND = "checkpoint_anchor"
 DEFAULT_TIMEOUT = 10
 
 
-def _shared_dirs() -> list[Path]:
-    dirs = []
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        dirs.append(Path(env_shared))
-    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
-    return dirs
-
-
-def _load_shared(filename: str, module_name: str) -> Any:
-    return load_shared(filename, module_name, dirs=_shared_dirs(), missing_ok=True)
-
-
 def _load_provenance() -> Any:
-    return _load_shared("sparknet-provenance.py", "sparknet_checkpoint_provenance")
+    return load_shared("sparknet-provenance.py", "sparknet_checkpoint_provenance", missing_ok=True)
 
 
 def _load_pusher() -> Any:

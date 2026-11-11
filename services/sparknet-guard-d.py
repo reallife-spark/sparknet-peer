@@ -458,18 +458,9 @@ def enforce_immutability(paths: list[str], *, dry_run: bool = False) -> list[str
     return enforced
 
 
-def _shared_dirs() -> list[Path]:
-    dirs = []
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        dirs.append(Path(env_shared))
-    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
-    return dirs
-
-
 def _load_shared_module(filename: str, modname: str):
     """Load a shared file through the one loader; optional modules return None."""
-    return load_shared(filename, modname, dirs=_shared_dirs(), missing_ok=True)
+    return load_shared(filename, modname, missing_ok=True)
 
 
 def _load_authz_module():

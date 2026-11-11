@@ -85,23 +85,14 @@ DEFAULT_KINDS = ("status", "metrics")
 DEFAULT_TIMEOUT = 10
 
 
-def _shared_dirs() -> list[Path]:
-    dirs = []
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        dirs.append(Path(env_shared))
-    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
-    return dirs
-
-
 def _load_authz() -> Any:
     """Load the one shared authorization implementation through the one loader."""
-    return load_shared("sparknet-authz.py", "sparknet_telemetry_authz", dirs=_shared_dirs(), missing_ok=True)
+    return load_shared("sparknet-authz.py", "sparknet_telemetry_authz", missing_ok=True)
 
 
 def _load_idle() -> Any:
     """Load the shared idle-evidence collector through the one loader."""
-    return load_shared("sparknet-idle.py", "sparknet_telemetry_idle", dirs=_shared_dirs(), missing_ok=True)
+    return load_shared("sparknet-idle.py", "sparknet_telemetry_idle", missing_ok=True)
 
 
 def _load_share_regime() -> Any:

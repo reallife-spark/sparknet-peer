@@ -85,25 +85,12 @@ DEFAULT_TIMEOUT = 10
 SERVING_PORTS = frozenset({4200, 4201, 4202, 4203, 4210, 51820, 8088, 8090, 9090})
 
 
-def _shared_dirs() -> list[Path]:
-    dirs = []
-    env_shared = os.environ.get("SPARKNET_SHARED_DIR", "").strip()
-    if env_shared:
-        dirs.append(Path(env_shared))
-    dirs.extend([DEFAULT_VAULT_ROOT.parent / "shared", SERVICE_DIR])
-    return dirs
-
-
-def _load_shared(filename: str, module_name: str) -> Any:
-    return load_shared(filename, module_name, dirs=_shared_dirs(), missing_ok=True)
-
-
 def _load_authz() -> Any:
-    return _load_shared("sparknet-authz.py", "sparknet_liveness_authz")
+    return load_shared("sparknet-authz.py", "sparknet_liveness_authz", missing_ok=True)
 
 
 def _load_monitor() -> Any:
-    return _load_shared("sparknet-liveness.py", "sparknet_liveness")
+    return load_shared("sparknet-liveness.py", "sparknet_liveness", missing_ok=True)
 
 
 def _load_pusher() -> Any:
@@ -179,27 +166,18 @@ def peer_roster(
     if not isinstance(entries, list):
         return roster
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("fingerprint") == self_fingerprint:
+        if not isinstance(entry, dict):
             continue
-        peer_identity = entry.get("identity")
-        if not isinstance(peer_identity, dict) or peer_identity.get("role") != "peer":
+        accepted = authz.accept_entry(entry, public_key, now=moment, mode="roster")
+        if accepted is None or accepted.fingerprint == self_fingerprint:
             continue
-        if entry.get("revoked"):
+        peer_identity = accepted.identity
+        if peer_identity.get("role") != "peer":
             continue
-        expires = _parse_stamp(entry.get("expires_at"))
-        if expires is not None and expires <= moment:
-            continue
-        try:
-            if not authz.verify_signature(
-                public_key, str(entry.get("signature_b64", "")), authz.authorization_message(entry)
-            ):
-                continue
-        except Exception:
-            continue
-        address = _address(entry.get("overlay_ipv4") or peer_identity.get("overlay_ipv4"))
+        address = _address(accepted.overlay_ipv4)
         if address is None:
             continue
-        name = str(peer_identity.get("node_id") or entry.get("fingerprint") or address)
+        name = str(peer_identity.get("node_id") or accepted.fingerprint or address)
         roster[name] = address
     return roster
 
