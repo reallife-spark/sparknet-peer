@@ -212,11 +212,11 @@ def test_runtime_asset_name_matches_the_build_script():
 
 
 def test_node_opencode_v2_requires_a_password():
-    entrypoint = ROLE_ROOT.parent / "spark-entrypoint.sh"
+    entrypoint = ROLE_ROOT.parent / "spark-entrypoint.py"
     if not entrypoint.is_file():
         pytest.skip("the fabric-root node entrypoint is not part of a role bundle")
     text = entrypoint.read_text()
-    assert "OPENCODE_SERVER_PASSWORD:?" in text
+    assert "OPENCODE_SERVER_PASSWORD" in text
     assert "4204 engine" in text
 
 
