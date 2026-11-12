@@ -330,12 +330,19 @@ class OpenShellBackend:
             encoding="utf-8",
         )
         os.chmod(env_file, 0o600)
-        policy = self.profile.write_vm_policy(vm_dir / "policy.yaml", model_port=proxy["port"])
+        skill_mounts = self.m.skill_mounts()
+        policy = self.profile.write_vm_policy(
+            vm_dir / "policy.yaml",
+            read_only=self.profile.DEFAULT_READ_ONLY
+            + (self.profile.VM_CONFIG_TARGET, *[target for _source, target in skill_mounts]),
+            model_port=proxy["port"],
+        )
         driver = self.profile.build_vm_driver_config(
             vault,
             vm_dir,
             vault_target=self.profile.VM_VAULT_TARGET,
             config_target=self.profile.VM_CONFIG_TARGET,
+            extra_mounts=skill_mounts,
         )
         driver_json = json.dumps(driver, separators=(",", ":"))
         self.m._own_path(vm_dir, recursive=True)

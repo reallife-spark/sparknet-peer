@@ -370,7 +370,15 @@ def test_engine_openshell_lifecycle_with_fake_cli(tmp_path: Path, monkeypatch: p
     driver = json.loads(create[create.index("--driver-config-json") + 1])
     assert 'run_as_user: "sandbox"' in policy
     assert "port: 11601" in policy
-    assert len(driver["vm"]["mounts"]) == 2
+    mounts = {row["target"]: row for row in driver["vm"]["mounts"]}
+    assert set(mounts) == {
+        "/work",
+        "/sandbox/.sparknet",
+        "/opt/sparknet/skill-catalog/base",
+        "/opt/sparknet/skill-catalog/role",
+        "/opt/sparknet/shared",
+    }
+    assert all(mounts[target]["read_only"] is True for target in mounts if target != "/work")
     backend.forwards["testuser"] = forward
     manager.stop("testuser")
     assert forward.stopped is True

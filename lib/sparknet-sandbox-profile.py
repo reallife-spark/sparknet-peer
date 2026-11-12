@@ -223,6 +223,7 @@ def build_vm_driver_config(
     vault_target: str = VM_VAULT_TARGET,
     config_target: str = VM_CONFIG_TARGET,
     workspace: str = WORKSPACE,
+    extra_mounts: Iterable[tuple[Path | str, str]] = (),
 ) -> dict[str, dict[str, list[dict[str, object]]]]:
     """Return the VM driver-config JSON for the vault and config directory.
 
@@ -242,14 +243,19 @@ def build_vm_driver_config(
     for left, right in ((vault_mount, config_mount), (config_mount, vault_mount)):
         if left == right or left.startswith(right + "/"):
             raise ProfileError("VM mounts must not be nested or identical")
-    return {
-        "vm": {
-            "mounts": [
-                {"type": "bind", "source": str(vault_path), "target": vault_mount, "read_only": False},
-                {"type": "bind", "source": str(config_path), "target": config_mount, "read_only": True},
-            ]
-        }
-    }
+    mounts: list[dict[str, object]] = [
+        {"type": "bind", "source": str(vault_path), "target": vault_mount, "read_only": False},
+        {"type": "bind", "source": str(config_path), "target": config_mount, "read_only": True},
+    ]
+    for source, target in extra_mounts:
+        source_path = Path(source)
+        if not source_path.is_absolute() or not source_path.is_dir():
+            raise ProfileError(f"VM extra mount source is not an absolute directory: {source!r}")
+        normal = validate_vm_mount_target(target, workspace=workspace)
+        if any(normal == str(row["target"]) or normal.startswith(str(row["target"]) + "/") for row in mounts):
+            raise ProfileError(f"VM extra mount nests an existing mount: {normal!r}")
+        mounts.append({"type": "bind", "source": str(source_path), "target": normal, "read_only": True})
+    return {"vm": {"mounts": mounts}}
 
 
 def write_vm_policy(

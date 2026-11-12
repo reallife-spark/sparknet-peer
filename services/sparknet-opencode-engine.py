@@ -405,6 +405,11 @@ class SandboxManager:
         self.cpus = args.sandbox_cpus
         self.idle_seconds = int(args.idle_seconds)
         self.config_template = Path(args.config_template).resolve()
+        self.repo_root = Path(__file__).resolve().parent.parent.parent
+        self.base_skills = self.repo_root / ".opencode" / "skills"
+        self.role_skills = self.repo_root / f"{self.role}-node" / ".opencode" / "skills"
+        self.shared_dir = self.repo_root / "shared"
+        self.skill_policy_path = self.repo_root / "contracts" / "skill-policy.json"
         self.model_id = args.model_id
         self.small_model_id = args.small_model
         self.allocator = NetworkAllocator(self.state_root)
@@ -610,6 +615,60 @@ class SandboxManager:
                 self.proxies[gateway] = proxy
         return f"http://{gateway}:{self.proxy_port}/v1"
 
+    def _skill_policy(self) -> dict[str, Any]:
+        try:
+            policy = json.loads(self.skill_policy_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise EngineError(500, f"skill policy missing or invalid: {exc}")
+        if not isinstance(policy, dict) or policy.get("schema") != "sparknet-skill-policy/1":
+            raise EngineError(500, f"skill policy is not sparknet-skill-policy/1: {self.skill_policy_path}")
+        return policy
+
+    def _featured_skills(self, policy: dict[str, Any]) -> list[str]:
+        featured = policy.get("featured", {})
+        merged: list[str] = []
+        for name in [*featured.get("base", []), *featured.get(self.role, [])]:
+            if name not in merged:
+                merged.append(name)
+        return merged[: int(policy.get("featured_limit", 35))]
+
+    def skill_mounts(self) -> list[tuple[Path, str]]:
+        """Read-only host trees the sandbox needs to search and load skills."""
+        return [
+            (self.base_skills, "/opt/sparknet/skill-catalog/base"),
+            (self.role_skills, "/opt/sparknet/skill-catalog/role"),
+            (self.shared_dir, "/opt/sparknet/shared"),
+        ]
+
+    def _skill_runtime(self) -> tuple[dict[str, Any], dict[str, str]]:
+        policy = self._skill_policy()
+        for source, _target in self.skill_mounts():
+            if not source.is_dir():
+                raise EngineError(500, f"skill source missing: {source}")
+        catalogs = [
+            "/opt/sparknet/skill-catalog/base/.catalog.json",
+            "/opt/sparknet/skill-catalog/role/.catalog.json",
+        ]
+        for host_catalog in (self.base_skills / ".catalog.json", self.role_skills / ".catalog.json"):
+            if not host_catalog.is_file():
+                raise EngineError(500, f"skill catalog missing for sandbox: {host_catalog}")
+        denied = list(policy.get("denied", {}).get(f"webui-{self.role}", []))
+        command = [
+            "python3",
+            "/opt/sparknet/shared/sparknet-skills-mcp.py",
+            "--catalog",
+            catalogs[0],
+            "--catalog",
+            catalogs[1],
+        ]
+        for group in denied:
+            command.extend(["--deny-group", str(group)])
+        mcp = {"type": "local", "command": command, "enabled": True}
+        permission: dict[str, str] = {"*": "deny"}
+        for name in self._featured_skills(policy):
+            permission[name] = "allow"
+        return mcp, permission
+
     def _config_for(self, user: str, proxy_url: str, *, directory: Path | None = None) -> Path:
         state = self.user_state(user)
         base = Path(directory) if directory is not None else state
@@ -619,10 +678,13 @@ class SandboxManager:
             template = self.config_template.read_text(encoding="utf-8")
         except OSError as exc:
             raise EngineError(500, f"opencode config template missing: {exc}")
+        skill_mcp, skill_permission = self._skill_runtime()
         content = (
             template.replace("${MODEL_PROXY_URL}", proxy_url)
             .replace("${MODEL_ID}", self.model_id)
             .replace("${SMALL_MODEL_ID}", self.small_model_id)
+            .replace("${SKILLS_MCP}", json.dumps(skill_mcp, separators=(",", ":")))
+            .replace("${SKILLS_PERMISSION}", json.dumps(skill_permission, separators=(",", ":")))
         )
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         stamp = base / "opencode.json.sha256"
@@ -716,6 +778,12 @@ class SandboxManager:
                 "type=bind,src=%s,dst=/home/opencode/.cache/opencode" % (state / "cache"),
                 "--mount",
                 f"type=bind,src={socket_dir},dst=/run/sparknet-runtime",
+                "--mount",
+                f"type=bind,src={self.base_skills},dst=/opt/sparknet/skill-catalog/base,readonly",
+                "--mount",
+                f"type=bind,src={self.role_skills},dst=/opt/sparknet/skill-catalog/role,readonly",
+                "--mount",
+                f"type=bind,src={self.shared_dir},dst=/opt/sparknet/shared,readonly",
                 "--mount",
                 f"type=bind,src={config},dst=/etc/opencode/opencode.json,readonly",
                 "--env",
