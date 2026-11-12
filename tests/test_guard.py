@@ -1075,3 +1075,57 @@ def test_a_corrupt_replay_store_refuses_to_start(tmp_path: Path):
     with pytest.raises(guardmod.Refusal) as exc:
         guardmod.ReplayGuard(store_path=path)
     assert exc.value.code == "replay_store_corrupt"
+
+
+def test_refusal_summary_reads_codes_without_rewriting(tmp_path: Path) -> None:
+    ledger = tmp_path / "audit.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "timestamp": "2026-11-11T00:00:00Z",
+                        "event": "patch_refused",
+                        "detail": {"code": "bad_signature"},
+                    },
+                    {
+                        "timestamp": "2026-11-11T00:01:00Z",
+                        "event": "registry_refused",
+                        "detail": {"code": "stale_publication"},
+                    },
+                    {"timestamp": "2026-11-11T00:02:00Z", "event": "patch_applied", "detail": {}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = ledger.read_text(encoding="utf-8")
+    summary = guardmod.read_refusal_summary(ledger)
+    assert summary["total"] == 2
+    assert summary["counts"] == {"bad_signature": 1, "stale_publication": 1}
+    assert [row["code"] for row in summary["recent"]] == ["bad_signature", "stale_publication"]
+    assert ledger.read_text(encoding="utf-8") == before
+
+
+def test_refusals_cli_reports_codes(tmp_path: Path) -> None:
+    ledger = tmp_path / "audit.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "blocks": [
+                    {"timestamp": "2026-11-11T00:00:00Z", "event": "patch_refused", "detail": {"code": "bad_signature"}}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(GUARD), "--refusals"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env={**os.environ, "SPARKNET_GUARD_AUDIT": str(ledger)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "bad_signature" in proc.stdout

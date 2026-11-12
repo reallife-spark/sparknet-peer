@@ -141,7 +141,7 @@ containment: ## THIS NODE's root-gated teardown. Not the cluster KillSwitch (Mas
 	@./scripts/sparknet-node-containment.sh $(if $(DRY_RUN),--dry-run,)
 
 guard-status: ## Report the guard's manifest state and authorization posture
-	@./scripts/sparknet-run $(PY) ./services/sparknet-guard-d.py --check-manifest
+	@./scripts/sparknet-run $(PY) ./services/sparknet-guard-d.py --check-manifest --refusals
 
 # --- peer-role contract conformance -----------------------------------------
 # These read the shared contract from the parent and prove this role still
