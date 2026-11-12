@@ -1,8 +1,8 @@
 [Unit]
-Description=Push a sparknet Qdrant snapshot every fifteen minutes
+Description=Push sparknet Qdrant snapshots once a day
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*-*-* 06:15:00
 RandomizedDelaySec=60
 AccuracySec=30s
 Persistent=true
