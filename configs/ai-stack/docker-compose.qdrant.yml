@@ -7,8 +7,10 @@
 # The API key is deploy-time. Generate it under the node state dir at 0600 and
 # pass it through the environment; compose fails loudly while it is unset.
 # Persistent storage is a named volume so a container recreation does not lose
-# the index. Snapshots are written under /qdrant/snapshots and pushed by the
-# uplift agent; they are not a reason to expose the HTTP port.
+# the index. Snapshots are written under /qdrant/snapshots, bind-mounted onto
+# the node's data disk so a stuck sync can never fill the root filesystem; they
+# are transport for the uplift agent, not a backup history. They are not a
+# reason to expose the HTTP port.
 name: sparknet-node-vector
 
 services:
@@ -23,6 +25,7 @@ services:
       QDRANT__LOG_LEVEL: "INFO"
     volumes:
       - qdrant-data:/qdrant/storage
+      - ${SPARKNET_QDRANT_SNAPSHOT_DIR:-/mnt/ai/qdrant-snapshots}:/qdrant/snapshots
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
