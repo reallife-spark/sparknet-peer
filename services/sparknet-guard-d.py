@@ -216,6 +216,45 @@ class AuditLedger:
         return payload
 
 
+REFUSAL_EVENTS = frozenset({"patch_refused", "registry_refused", "rfi_refused"})
+
+
+def read_refusal_summary(path: Path, *, limit: int = 10) -> dict[str, Any]:
+    """Read the guard ledger without mutating it and summarise refusal codes."""
+    result: dict[str, Any] = {"total": 0, "counts": {}, "recent": []}
+    if not path.exists():
+        result["unavailable"] = f"no audit ledger at {path}"
+        return result
+    try:
+        document = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        result["unavailable"] = f"cannot read {path}: {exc}"
+        return result
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    if not isinstance(blocks, list):
+        result["unavailable"] = f"{path} has no blocks array"
+        return result
+    counts: dict[str, int] = {}
+    recent: list[dict[str, Any]] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("event") not in REFUSAL_EVENTS:
+            continue
+        detail = block.get("detail") if isinstance(block.get("detail"), dict) else {}
+        code = str(detail.get("code") or "unknown")
+        counts[code] = counts.get(code, 0) + 1
+        recent.append(
+            {
+                "timestamp": str(block.get("timestamp") or ""),
+                "event": str(block.get("event")),
+                "code": code,
+            }
+        )
+    result["total"] = len(recent)
+    result["counts"] = dict(sorted(counts.items()))
+    result["recent"] = recent[-limit:]
+    return result
+
+
 # --- replay protection -------------------------------------------------------
 
 
@@ -1212,6 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Sparknet Critical File Guard (Master-Gated Immutable File Guard)")
     parser.add_argument("--dry-run", action="store_true", help="Verify and audit, never mutate")
     parser.add_argument("--check-manifest", action="store_true", help="Validate the manifest and exit")
+    parser.add_argument("--refusals", action="store_true", help="Print recent refusal codes from the audit ledger")
     parser.add_argument(
         "--apply-enabled",
         action="store_true",
@@ -1246,6 +1286,21 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     guard = Guard(vault_root, apply_enabled=args.apply_enabled, master_pubkey=master_pubkey, dry_run=args.dry_run)
+
+    if args.refusals:
+        summary = read_refusal_summary(guard.ledger.path)
+        if "unavailable" in summary:
+            print(f"[guard] refusals unavailable: {summary['unavailable']}", file=sys.stderr)
+        elif summary["total"] == 0:
+            print("[guard] refusals: none recorded")
+        else:
+            print(f"[guard] refusals: {summary['total']} recorded")
+            for code, count in summary["counts"].items():
+                print(f"  {code}: {count}")
+            for row in summary["recent"]:
+                print(f"  {row['timestamp']} {row['event']} {row['code']}")
+        if not args.check_manifest:
+            return 0
 
     if args.check_manifest:
         try:
