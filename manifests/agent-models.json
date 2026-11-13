@@ -1,7 +1,7 @@
 {
   "schema": "sparknet-agent-models/1",
   "contract": "peer-webui-surface",
-  "description": "The Open WebUI surface of the node (peer PLAN Step 5 DoD 1): plan, build, vault, the node orchestrator and MASTERSPIKE are selectable as models, each bound to the agent that owns it. This file is the committed, versioned declaration \u2014 Open WebUI panel state is a database click and must never be the source of truth, because a redeploy must not lose the surface. Read by the dispatch bridge (`/v1/models`) and by peer-node/tests/test_webui_surface.py, which fails the build if the declared surface and the bridge disagree.",
+  "description": "The Open WebUI surface of the node (peer PLAN Step 5 DoD 1): plan, build, vault, the node orchestrator and MASTERSPIKE are selectable as models, each bound to the agent that owns it. This file is the committed, versioned declaration — Open WebUI panel state is a database click and must never be the source of truth, because a redeploy must not lose the surface. Read by the dispatch bridge (`/v1/models`) and by peer-node/tests/test_webui_surface.py, which fails the build if the declared surface and the bridge disagree.",
   "authored": "2026-10-10",
   "status": "declared, not deployed",
   "selectable": [
@@ -40,19 +40,19 @@
       "why": "a format, never a capability: authority is Ed25519 in the Master, not a prompt (peer PLAN Step 7 DoD 4)"
     }
   ],
-  "why_these_agents": "plan and build are opencode built-ins (present in any opencode node); `vault` and `sparknet-node` are the node's own agent papers, bundled with the role; `masterspike` is the Step 7 format carrier \u2014 a model, selectable like the agents, that holds no signing capability (peer PLAN Step 7 DoD 4). Each id here is a role the node births, not a model the bridge invents \u2014 the bridge still discovers on-disk pods (`.opencode/agents/*.md`, `agents/*/`) as its second, unselectable tier.",
+  "why_these_agents": "plan and build are opencode built-ins (present in any opencode node); `vault` and `sparknet-node` are the node's own agent papers, bundled with the role; `masterspike` is the Step 7 format carrier — a model, selectable like the agents, that holds no signing capability (peer PLAN Step 7 DoD 4). Each id here is a role the node births, not a model the bridge invents — the bridge still discovers on-disk pods (`.opencode/agents/*.md`, `agents/*/`) as its second, unselectable tier.",
   "local_models": [
     {
-      "id": "qwen3.5-9b-q8:latest",
-      "label": "Qwen3.5 9B Q8 (student)",
+      "id": "qwen3.6-0.6b-q8:latest",
+      "label": "Qwen3.6 0.6B Q8 (student)",
       "role": "student",
-      "why": "The live student winner on agx32: 11.27 tok/s, 8.06 GiB, 100% on the fixed suite (Q8_0, Ollama). Selectable, not the default; llama3.2 remains the fallback."
+      "why": "Same-version student for the Qwen3.6 teacher; Q8_0 keeps the tokenizer/family transfer clean. Candidate until the Step 108 live check."
     },
     {
-      "id": "qwen3.8-27b-q4:latest",
-      "label": "Qwen3.8 27B Q4 (student-large)",
-      "role": "student-large",
-      "why": "Same-generation student experiment: 4.75 tok/s, 14.73 GiB; slower than the 9B and not the default."
+      "id": "qwen3.5-9b-q8:latest",
+      "label": "Qwen3.5 9B Q8 (fallback)",
+      "role": "fallback",
+      "why": "Retired from the teacher/student pair (not the same Qwen version), but kept selectable as a fallback chat model."
     }
   ]
 }
