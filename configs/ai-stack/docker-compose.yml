@@ -85,7 +85,7 @@ services:
       OPENAI_API_BASE_URLS: "http://127.0.0.1:4204/v1"
       OPENAI_API_KEYS: "${SPARKNET_OPENCODE_ENGINE_TOKEN:?set at deploy time; do not commit the engine token}"
       MODEL_FILTER_ENABLED: "true"
-      MODEL_FILTER_LIST: "sparknet-chat,sparknet-plan,sparknet-build,qwen3.6-0.6b-q8:latest,qwen3.5-9b-q8:latest,llama3.2:latest,sparknet-masterspike:latest"
+      MODEL_FILTER_LIST: "sparknet-chat,sparknet-plan,sparknet-build,qwen3.6-27b-q4:latest,qwen3-0.6b-q8:latest,qwen3.5-9b-q8:latest,llama3.2:latest,sparknet-masterspike:latest"
       # The default is the vault-aware engine chat. A local Ollama model remains
       # selectable as a fallback if the engine is down.
       DEFAULT_MODELS: "sparknet-chat"

@@ -67,13 +67,14 @@
       "sparknet-chat",
       "sparknet-plan",
       "sparknet-build",
-      "qwen3.6-0.6b-q8:latest",
+      "qwen3.6-27b-q4:latest",
       "qwen3.5-9b-q8:latest",
       "llama3.2:latest",
-      "sparknet-masterspike:latest"
+      "sparknet-masterspike:latest",
+      "qwen3-0.6b-q8:latest"
     ],
     "declared_not_database_state": "Open WebUI's panel is a database click; the surface lives in agent-models.json + this compose env so a redeploy cannot lose it (peer PLAN Step 5 DoD 5).",
-    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=sparknet-chat,sparknet-plan,sparknet-build,qwen3.6-0.6b-q8:latest,qwen3.5-9b-q8:latest,llama3.2:latest,sparknet-masterspike:latest, DEFAULT_MODELS=sparknet-chat (the engine chat is the default; local models stay selectable as fallback)",
+    "model_filter_env": "MODEL_FILTER_ENABLED=true, MODEL_FILTER_LIST=sparknet-chat,sparknet-plan,sparknet-build,qwen3.6-27b-q4:latest,qwen3.5-9b-q8:latest,llama3.2:latest,qwen3-0.6b-q8:latest,sparknet-masterspike:latest, DEFAULT_MODELS=sparknet-chat (the engine chat is the default; local models stay selectable as fallback)",
     "rag": "enabled, structure-only corpus, backed by the node's own Qdrant server (peer PLAN Step 5 DoD 4, vector-store decision 2026-11-01).",
     "proxy": "nginx:1.27-alpine host network; injects /sparknet-menu.js and proxies /sparknet-console/ to the read-only console on 127.0.0.1:8099",
     "engine_route": "OPENAI_API_BASE_URLS=http://127.0.0.1:4204/v1 — the loopback Sparknet OpenCode engine. Open WebUI forwards X-Sparknet-User, X-Sparknet-User-Role, X-Sparknet-Chat-Id and X-Sparknet-Model-Id as custom headers.",
