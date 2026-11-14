@@ -11,7 +11,7 @@
   },
   "profiles": {
     "student": {
-      "model_id": "qwen3.5-9b-q8",
+      "model_id": "qwen3-4b-2507-q4-k-m",
       "compose_file": "peer-node/configs/model-runtime/docker-compose.student.yml",
       "project": "sparknet-student",
       "profile": "student",
@@ -19,7 +19,7 @@
         "student"
       ],
       "model_env": "STUDENT_MODEL_FILE",
-      "memory_gb": 12,
+      "memory_gb": 27,
       "health_url": "http://127.0.0.1:8101/health",
       "idle_stop_minutes": 30,
       "conflicts": [
@@ -27,7 +27,7 @@
       ]
     },
     "student-large": {
-      "model_id": "qwen3.8-27b-q4",
+      "model_id": "qwen3.6-27b-q4-k-m",
       "compose_file": "peer-node/configs/model-runtime/docker-compose.student.yml",
       "project": "sparknet-student",
       "profile": "student",
@@ -35,7 +35,7 @@
         "student"
       ],
       "model_env": "STUDENT_MODEL_FILE",
-      "memory_gb": 20,
+      "memory_gb": 21,
       "health_url": "http://127.0.0.1:8101/health",
       "idle_stop_minutes": 20,
       "conflicts": [

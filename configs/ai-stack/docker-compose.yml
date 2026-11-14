@@ -49,6 +49,7 @@ services:
       # overlay address: a node that answers with another node's model stopped
       # being a node.
       OLLAMA_BASE_URL: "http://127.0.0.1:11434"
+      ENABLE_OLLAMA_API: "true"
       WEBUI_AUTH: "true"
       # Signup is enabled but approval-mediated (fabric ADMIN_FEDERATION_DESIGN.md):
       # a new account lands `pending` and reaches nothing until the Master (via
@@ -85,7 +86,7 @@ services:
       OPENAI_API_BASE_URLS: "http://127.0.0.1:4204/v1"
       OPENAI_API_KEYS: "${SPARKNET_OPENCODE_ENGINE_TOKEN:?set at deploy time; do not commit the engine token}"
       MODEL_FILTER_ENABLED: "true"
-      MODEL_FILTER_LIST: "sparknet-chat,sparknet-plan,sparknet-build,qwen3.6-27b-q4:latest,qwen3-0.6b-q8:latest,qwen3.5-9b-q8:latest,llama3.2:latest,sparknet-masterspike:latest"
+      MODEL_FILTER_LIST: "sparknet-chat,sparknet-plan,sparknet-build,qwen3-4b-2507:latest,qwen3-coder-30b-65k:latest,qwen3-vl-4b-65k:latest,llama3.2:latest,sparknet-masterspike:latest"
       # The default is the vault-aware engine chat. A local Ollama model remains
       # selectable as a fallback if the engine is down.
       DEFAULT_MODELS: "sparknet-chat"
@@ -101,12 +102,10 @@ services:
       # 02_Daily, 03_Sources, .state). The corpus builder is
       # scripts/sparknet-rag-corpus.py.
       RAG_INGESTION_ENABLED: "true"
-      # Keep the CPU MiniLM model the existing KBs were embedded with. The
-      # node's Qwen3/Nomic Ollama embeddings were measured at ~20 s per request
-      # on agx64 (GPU shared with the text model), which makes a reindex
-      # unusable. Upgrade only when a dedicated embed engine is resident.
-      RAG_EMBEDDING_ENGINE: ""
-      RAG_EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+      # Step 110: Qwen3-Embedding-0.6B. The KBs must be reindexed once
+      # (1024 dimensions); the old MiniLM index is not compatible.
+      RAG_EMBEDDING_ENGINE: "ollama"
+      RAG_EMBEDDING_MODEL: "qwen3-embedding-0.6b:latest"
       ENABLE_RAG_HYBRID_SEARCH: "true"
       RAG_TOP_K: "8"
       RAG_CHUNK_SIZE: "1000"
