@@ -104,8 +104,10 @@ services:
       RAG_INGESTION_ENABLED: "true"
       # Step 110: Qwen3-Embedding-0.6B. The KBs must be reindexed once
       # (1024 dimensions); the old MiniLM index is not compatible.
-      RAG_EMBEDDING_ENGINE: "ollama"
-      RAG_EMBEDDING_MODEL: "qwen3-embedding-0.6b:latest"
+      RAG_EMBEDDING_ENGINE: "openai"
+      RAG_EMBEDDING_MODEL: "qwen3-embedding-0.6b"
+      RAG_OPENAI_API_BASE_URL: "http://127.0.0.1:8001/v1"
+      RAG_OPENAI_API_KEY: "local"
       ENABLE_RAG_HYBRID_SEARCH: "true"
       RAG_TOP_K: "8"
       RAG_CHUNK_SIZE: "1000"
